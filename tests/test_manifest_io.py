@@ -208,3 +208,59 @@ def test_preflight_detects_insufficient_space(tmp_path: Path, monkeypatch) -> No
     monkeypatch.setattr(manifest_io.shutil, "disk_usage", lambda path: usage(2048, 2000, 48))
     issues = manifest_io.preflight_manifest(manifest)
     assert any("Espacio insuficiente" in issue for issue in issues)
+
+
+def test_apply_writes_journal(tmp_path: Path) -> None:
+    import json
+
+    src = tmp_path / "a.nes"
+    src.write_bytes(b"rom")
+    journal = tmp_path / "applied"
+    manifest = Manifest(
+        id="m-journal",
+        scan_id="s",
+        platform=Platform.NES,
+        profile_snapshot={},
+        entries=[_copy_entry(src, tmp_path / "out" / "a.nes")],
+    )
+    apply_manifest(manifest, confirm=True, journal_dir=journal)
+    entries = list(journal.glob("*.json"))
+    assert len(entries) == 1
+    payload = json.loads(entries[0].read_text(encoding="utf-8"))
+    assert payload["manifest_id"] == "m-journal"
+    assert len(payload["operations"]) == 1
+    assert "copiado" in payload["operations"][0]
+    assert "error" not in payload
+
+
+def test_apply_journal_records_partial_failure(tmp_path: Path) -> None:
+    import hashlib
+    import json
+
+    good = tmp_path / "good.nes"
+    bad = tmp_path / "bad.nes"
+    good.write_bytes(b"ok")
+    bad.write_bytes(b"contenido-cambiado")
+    journal = tmp_path / "applied"
+    manifest = Manifest(
+        id="m-fallo",
+        scan_id="s",
+        platform=Platform.NES,
+        profile_snapshot={},
+        entries=[
+            _copy_entry(good, tmp_path / "out" / "good.nes"),
+            ManifestEntry(
+                bucket=OutputBucket.MAIN,
+                action=ActionMode.COPY,
+                source_path=str(bad),
+                source_md5=hashlib.md5(b"contenido-original").hexdigest(),
+                destination_path=str(tmp_path / "out" / "bad.nes"),
+                rom_id="bad",
+            ),
+        ],
+    )
+    with pytest.raises(RuntimeError):
+        apply_manifest(manifest, confirm=True, journal_dir=journal)
+    payload = json.loads(next(iter(journal.glob("*.json"))).read_text(encoding="utf-8"))
+    assert len(payload["operations"]) == 1
+    assert "cambió desde el escaneo" in payload["error"]

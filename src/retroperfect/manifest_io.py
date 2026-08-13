@@ -82,93 +82,139 @@ def apply_manifest(
     verify: bool = True,
     hard_delete: bool = False,
     trash_dir: Path | None = None,
+    journal_dir: Path | None = None,
 ) -> list[str]:
     if not confirm:
         raise RuntimeError("No se aplica el manifiesto sin confirmación explícita.")
     issues = preflight_manifest(manifest)
     if issues:
         raise RuntimeError("No se puede aplicar el manifiesto:\n- " + "\n- ".join(issues))
+    completed: list[str] = []
+    try:
+        _apply_entries(manifest, mode, verify, hard_delete, trash_dir, completed)
+    except Exception as exc:
+        _write_journal(manifest, completed, verify, hard_delete, journal_dir, error=str(exc))
+        raise
+    _write_journal(manifest, completed, verify, hard_delete, journal_dir)
+    return completed
+
+
+def _write_journal(
+    manifest: Manifest,
+    completed: list[str],
+    verify: bool,
+    hard_delete: bool,
+    journal_dir: Path | None,
+    error: str | None = None,
+) -> None:
+    """Deja constancia de las operaciones aplicadas (y del error, si lo hubo)."""
+    if not completed and error is None:
+        return
+    root = journal_dir or (project_state_dir() / "applied")
+    root.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, object] = {
+        "manifest_id": manifest.id,
+        "platform": manifest.platform.value,
+        "applied_at": datetime.now().isoformat(timespec="seconds"),
+        "verify": verify,
+        "hard_delete": hard_delete,
+        "operations": completed,
+    }
+    if error is not None:
+        payload["error"] = error
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    (root / f"{stamp}-{manifest.id}.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _apply_entries(
+    manifest: Manifest,
+    mode: ActionMode | None,
+    verify: bool,
+    hard_delete: bool,
+    trash_dir: Path | None,
+    completed: list[str],
+) -> None:
     session_trash: Path | None = None
     trashed: list[dict[str, str]] = []
-    completed: list[str] = []
     seen: set[tuple[str, str | None, ActionMode]] = set()
-    for entry in manifest.entries:
-        action = entry.action
-        if mode is not None and mode != action:
-            raise RuntimeError(
-                f"El manifiesto se planificó con acción '{action.value}' pero se pidió aplicar '{mode.value}'. Regenera el plan con la acción deseada."
-            )
-        source = Path(entry.source_path)
-        destination = Path(entry.destination_path) if entry.destination_path else None
-        key = (str(source), str(destination) if destination else None, action)
-        if key in seen:
-            continue
-        seen.add(key)
-        if entry.patch_url:
-            if action == ActionMode.DELETE:
-                completed.append(f"parche omitido en modo borrado: {source}")
-                continue
-            if not destination:
-                raise RuntimeError(f"La acción de parcheo necesita un destino para {source}")
-            source_data = _read_entry_source(entry.source_path, entry.source_inner_path)
-            patched, patch = download_and_apply_patch(source_data, entry.patch_url)
-            patched_md5 = hashlib.md5(patched).hexdigest()
-            if entry.patch_expected_md5 and patched_md5.lower() != entry.patch_expected_md5.lower():
+    try:
+        for entry in manifest.entries:
+            action = entry.action
+            if mode is not None and mode != action:
                 raise RuntimeError(
-                    f"El hash del ROM parcheado no coincide para {source}: se esperaba {entry.patch_expected_md5} y se obtuvo {patched_md5}"
+                    f"El manifiesto se planificó con acción '{action.value}' pero se pidió aplicar '{mode.value}'. Regenera el plan con la acción deseada."
                 )
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(patched)
-            if verify:
-                _verify_destination(destination, patched_md5, source)
-                completed.append(f"parcheado {source} con {patch.name} -> {destination} (md5 verificado)")
-            else:
-                completed.append(f"parcheado {source} con {patch.name} -> {destination}")
-            continue
-        if action == ActionMode.COPY:
-            if not destination:
-                raise RuntimeError(f"La acción de copia necesita un destino para {source}")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if verify:
-                source_md5 = _copy_hashing(source, destination)
-                _check_source_md5(entry, source_md5)
-                _verify_destination(destination, source_md5, source)
-                completed.append(f"copiado {source} -> {destination} (md5 verificado)")
-            else:
-                shutil.copy2(source, destination)
-                completed.append(f"copiado {source} -> {destination}")
-        elif action == ActionMode.MOVE:
-            if not destination:
-                raise RuntimeError(f"La acción de mover necesita un destino para {source}")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            move_md5 = _file_md5(source) if verify else None
-            if move_md5 is not None:
-                _check_source_md5(entry, move_md5)
-            shutil.move(str(source), str(destination))
-            if move_md5 is not None:
-                _verify_destination(destination, move_md5, source)
-                completed.append(f"movido {source} -> {destination} (md5 verificado)")
-            else:
-                completed.append(f"movido {source} -> {destination}")
-        elif action == ActionMode.DELETE:
-            if hard_delete:
-                source.unlink()
-                completed.append(f"borrado definitivo {source}")
-            else:
-                if session_trash is None:
-                    root = trash_dir or (project_state_dir() / "trash")
-                    session_trash = root / datetime.now().strftime("%Y%m%d-%H%M%S")
-                    session_trash.mkdir(parents=True, exist_ok=True)
-                target = _trash_target(session_trash, source.name)
-                shutil.move(str(source), str(target))
-                trashed.append({"original": str(source), "trashed": target.name})
-                completed.append(f"movido a papelera {source} -> {target}")
-    if session_trash is not None and trashed:
-        (session_trash / "index.json").write_text(
-            json.dumps({"created": datetime.now().isoformat(timespec="seconds"), "files": trashed}, indent=2),
-            encoding="utf-8",
-        )
-    return completed
+            source = Path(entry.source_path)
+            destination = Path(entry.destination_path) if entry.destination_path else None
+            key = (str(source), str(destination) if destination else None, action)
+            if key in seen:
+                continue
+            seen.add(key)
+            if entry.patch_url:
+                if action == ActionMode.DELETE:
+                    completed.append(f"parche omitido en modo borrado: {source}")
+                    continue
+                if not destination:
+                    raise RuntimeError(f"La acción de parcheo necesita un destino para {source}")
+                source_data = _read_entry_source(entry.source_path, entry.source_inner_path)
+                patched, patch = download_and_apply_patch(source_data, entry.patch_url)
+                patched_md5 = hashlib.md5(patched).hexdigest()
+                if entry.patch_expected_md5 and patched_md5.lower() != entry.patch_expected_md5.lower():
+                    raise RuntimeError(
+                        f"El hash del ROM parcheado no coincide para {source}: se esperaba {entry.patch_expected_md5} y se obtuvo {patched_md5}"
+                    )
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(patched)
+                if verify:
+                    _verify_destination(destination, patched_md5, source)
+                    completed.append(f"parcheado {source} con {patch.name} -> {destination} (md5 verificado)")
+                else:
+                    completed.append(f"parcheado {source} con {patch.name} -> {destination}")
+                continue
+            if action == ActionMode.COPY:
+                if not destination:
+                    raise RuntimeError(f"La acción de copia necesita un destino para {source}")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if verify:
+                    source_md5 = _copy_hashing(source, destination)
+                    _check_source_md5(entry, source_md5)
+                    _verify_destination(destination, source_md5, source)
+                    completed.append(f"copiado {source} -> {destination} (md5 verificado)")
+                else:
+                    shutil.copy2(source, destination)
+                    completed.append(f"copiado {source} -> {destination}")
+            elif action == ActionMode.MOVE:
+                if not destination:
+                    raise RuntimeError(f"La acción de mover necesita un destino para {source}")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                move_md5 = _file_md5(source) if verify else None
+                if move_md5 is not None:
+                    _check_source_md5(entry, move_md5)
+                shutil.move(str(source), str(destination))
+                if move_md5 is not None:
+                    _verify_destination(destination, move_md5, source)
+                    completed.append(f"movido {source} -> {destination} (md5 verificado)")
+                else:
+                    completed.append(f"movido {source} -> {destination}")
+            elif action == ActionMode.DELETE:
+                if hard_delete:
+                    source.unlink()
+                    completed.append(f"borrado definitivo {source}")
+                else:
+                    if session_trash is None:
+                        root = trash_dir or (project_state_dir() / "trash")
+                        session_trash = root / datetime.now().strftime("%Y%m%d-%H%M%S")
+                        session_trash.mkdir(parents=True, exist_ok=True)
+                    target = _trash_target(session_trash, source.name)
+                    shutil.move(str(source), str(target))
+                    trashed.append({"original": str(source), "trashed": target.name})
+                    completed.append(f"movido a papelera {source} -> {target}")
+    finally:
+        if session_trash is not None and trashed:
+            (session_trash / "index.json").write_text(
+                json.dumps({"created": datetime.now().isoformat(timespec="seconds"), "files": trashed}, indent=2),
+                encoding="utf-8",
+            )
 
 
 def _trash_target(trash_session: Path, name: str) -> Path:
