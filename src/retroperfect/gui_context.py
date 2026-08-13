@@ -25,6 +25,7 @@ class UiContext:
     dats_tab: Any = None
     profile_tab: Any = None
     scan_tab: Any = None
+    verify_tab: Any = None
     decisions_tab: Any = None
     plan_tab: Any = None
     summary_tab: Any = None
