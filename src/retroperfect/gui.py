@@ -1668,7 +1668,7 @@ def build_ui() -> None:
 
                         async def download_dat_click() -> None:
                             try:
-                                imported = download_and_import_source(dat_source.value)
+                                imported = await asyncio.to_thread(download_and_import_source, dat_source.value)
                                 dat.value = imported[0].path
                                 dat_status.text = f"DAT descargado e importado: {imported[0].name}"
                                 refresh_dat_table()
@@ -1679,8 +1679,10 @@ def build_ui() -> None:
                         ui.button("Descargar seleccionado", icon="download", on_click=download_dat_click).props("color=primary").classes("w-fit")
                         validation_status = ui.label().classes("text-sm text-gray-600")
 
-                        def validate_click() -> None:
-                            issues = validate_setup(
+                        async def validate_click() -> None:
+                            validation_status.text = "Validando configuración..."
+                            issues = await asyncio.to_thread(
+                                validate_setup,
                                 Path(source.value) if source.value else None,
                                 Path(dat.value) if dat.value else None,
                                 Path(outdir.value) if outdir.value else None,
@@ -1713,7 +1715,7 @@ def build_ui() -> None:
                             save_credentials(username.value, api_key.value)
                             platform = _current_platform()
                             ra_status.text = "Sincronizando hashes RA..."
-                            count = sync_ra_hashes(platform, username=username.value, api_key=api_key.value)
+                            count = await asyncio.to_thread(sync_ra_hashes, platform, username.value, api_key.value)
                             ra_status.text = f"Listo: {count} hashes RA cacheados."
                             ra_cache_status.text = _ra_status_label(platform)
                             refresh_header_status()
@@ -1807,7 +1809,7 @@ def build_ui() -> None:
                             dat_manager_status.text = "Selecciona una fuente online."
                             return
                         try:
-                            imported = download_and_import_source(selected[0]["id"])
+                            imported = await asyncio.to_thread(download_and_import_source, selected[0]["id"])
                             dat.value = imported[0].path
                             dat_manager_status.text = f"Descargados/importados {len(imported)} DATs. Activo: {imported[0].name}"
                             refresh_dat_table()
@@ -1830,7 +1832,7 @@ def build_ui() -> None:
                             dat_manager_status.text = "Introduce una URL directa."
                             return
                         try:
-                            imported = download_and_import_url(custom_url.value, filename=custom_filename.value or None)
+                            imported = await asyncio.to_thread(download_and_import_url, custom_url.value, custom_filename.value or None)
                             dat.value = imported[0].path
                             dat_manager_status.text = f"URL descargada/importada: {imported[0].name}"
                             refresh_dat_table()
@@ -1920,7 +1922,7 @@ def build_ui() -> None:
                                 dat_manager_status.text = "Selecciona un DAT, XML o ZIP."
                                 return
                             try:
-                                imported = import_dat_file(Path(import_path.value))
+                                imported = await asyncio.to_thread(import_dat_file, Path(import_path.value))
                                 dat.value = imported[0].path
                                 dat_manager_status.text = f"Importados {len(imported)} DATs. Usando: {imported[0].name}"
                                 refresh_dat_table()
@@ -2185,15 +2187,16 @@ def build_ui() -> None:
                             state["scan_progress"] = {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "preparing"}
                             dat_path = Path(dat.value) if dat.value else None
                             if dat_path and dat_path.suffix.lower() == ".zip":
-                                imported = import_dat_file(dat_path)
+                                imported = await asyncio.to_thread(import_dat_file, dat_path)
                                 dat_path = Path(imported[0].path)
                                 try:
                                     state["suppress_setup_dirty"] = True
                                     dat.value = str(dat_path)
                                 finally:
                                     state["suppress_setup_dirty"] = False
-                            catalog = parse_dat(dat_path) if dat_path else None
-                            dat_index = DatIndex(catalog) if catalog else None
+                            scan_status.text = "Cargando e indexando DAT..."
+                            catalog = await asyncio.to_thread(parse_dat, dat_path) if dat_path else None
+                            dat_index = await asyncio.to_thread(DatIndex, catalog) if catalog else None
                             scan_status.text = "Escaneando ZIPs/ROMs... en romsets grandes puede tardar unos minutos."
 
                             def progress_update(update: dict[str, object]) -> None:
