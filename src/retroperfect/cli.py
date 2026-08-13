@@ -270,6 +270,44 @@ def validate(
         console.print(f"[yellow]- {issue}[/yellow]")
 
 
+@app.command("trash-list")
+def trash_list() -> None:
+    """Lista las sesiones de la papelera del proyecto."""
+    from .trash import list_sessions
+
+    sessions = list_sessions()
+    if not sessions:
+        console.print("La papelera está vacía.")
+        return
+    table = Table(title="Papelera (.retroperfect/trash)")
+    for column in ["Sesión", "Creada", "Archivos", "Tamaño", "Restaurable"]:
+        table.add_column(column)
+    for session in sessions:
+        table.add_row(session.name, session.created, str(session.files), f"{session.total_size / (1024 * 1024):.1f} MB", "sí" if session.restorable else "no")
+    console.print(table)
+
+
+@app.command("trash-restore")
+def trash_restore(session: Annotated[str, typer.Argument(help="Nombre de la sesión (ver trash-list).")]) -> None:
+    """Restaura los archivos de una sesión de papelera a sus rutas originales."""
+    from .trash import restore_session
+
+    for line in restore_session(session):
+        console.print(line)
+
+
+@app.command("trash-empty")
+def trash_empty(confirm: Annotated[bool, typer.Option("--confirm/--no-confirm")] = False) -> None:
+    """Vacía la papelera de forma definitiva. Requiere --confirm."""
+    from .trash import empty_trash
+
+    if not confirm:
+        console.print("[yellow]Vaciar la papelera es irreversible. Repite con --confirm.[/yellow]")
+        raise typer.Exit(code=1)
+    removed = empty_trash()
+    console.print(f"[green]Papelera vaciada: {removed} archivos eliminados definitivamente.[/green]")
+
+
 @app.command()
 def gui(host: str = "127.0.0.1", port: int = 8080) -> None:
     """Arranca la interfaz local NiceGUI."""

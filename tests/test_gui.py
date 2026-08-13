@@ -6,8 +6,6 @@ from nicegui.testing import User
 
 from retroperfect.gui import build_ui
 
-pytest_plugins = ["nicegui.testing.user_plugin"]
-
 
 @pytest.fixture(autouse=True)
 def gui_page(user: User, monkeypatch: pytest.MonkeyPatch) -> None:

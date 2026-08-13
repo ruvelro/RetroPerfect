@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import html
+import json
 import os
 import shutil
 import zipfile
@@ -88,6 +89,7 @@ def apply_manifest(
     if issues:
         raise RuntimeError("No se puede aplicar el manifiesto:\n- " + "\n- ".join(issues))
     session_trash: Path | None = None
+    trashed: list[dict[str, str]] = []
     completed: list[str] = []
     seen: set[tuple[str, str | None, ActionMode]] = set()
     for entry in manifest.entries:
@@ -159,7 +161,13 @@ def apply_manifest(
                     session_trash.mkdir(parents=True, exist_ok=True)
                 target = _trash_target(session_trash, source.name)
                 shutil.move(str(source), str(target))
+                trashed.append({"original": str(source), "trashed": target.name})
                 completed.append(f"movido a papelera {source} -> {target}")
+    if session_trash is not None and trashed:
+        (session_trash / "index.json").write_text(
+            json.dumps({"created": datetime.now().isoformat(timespec="seconds"), "files": trashed}, indent=2),
+            encoding="utf-8",
+        )
     return completed
 
 
