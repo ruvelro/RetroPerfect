@@ -153,7 +153,7 @@ def _mask_quoted(text: str) -> str:
 class DatIndex:
     def __init__(self, catalog: DatCatalog):
         self.catalog = catalog
-        self.by_crc: dict[str, DatGame] = {}
+        self.by_crc: dict[str, list[tuple[DatGame, int | None]]] = {}
         self.by_md5: dict[str, DatGame] = {}
         self.by_sha1: dict[str, DatGame] = {}
         self.by_size: dict[int, list[DatGame]] = {}
@@ -167,7 +167,7 @@ class DatIndex:
                 self.by_set_name.setdefault(_name_key(game.description), game)
             for rom in game.roms:
                 if rom.crc32:
-                    self.by_crc[rom.crc32] = game
+                    self.by_crc.setdefault(rom.crc32, []).append((game, rom.size))
                 if rom.md5:
                     self.by_md5[rom.md5] = game
                 if rom.sha1:
@@ -183,7 +183,13 @@ class DatIndex:
                     self.headered_candidates_by_name.setdefault(_name_key(rom.name), []).append((game, header))
 
     def match(self, crc32: str, md5: str, sha1: str, size: int) -> DatGame | None:
-        return self.by_sha1.get(sha1.lower()) or self.by_md5.get(md5.lower()) or self.by_crc.get(crc32.lower())
+        game = self.by_sha1.get(sha1.lower()) or self.by_md5.get(md5.lower())
+        if game:
+            return game
+        for candidate, rom_size in self.by_crc.get(crc32.lower(), []):
+            if rom_size is None or rom_size == size:
+                return candidate
+        return None
 
     def match_any(self, hashes) -> DatGame | None:
         full = self.match(hashes.crc32, hashes.md5, hashes.sha1, hashes.size)

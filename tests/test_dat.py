@@ -132,3 +132,21 @@ game ( name "Game (USA)" rom ( name "Game (USA).unh" size 4 crc ADF3F363 ) )""",
     suggestion = suggest_dat_for_source(tmp_path / "Nintendo - Nintendo Entertainment System (Unheadered)")
     assert suggestion is not None
     assert suggestion.header_mode == "unheadered"
+
+
+def test_crc_match_requires_matching_size(tmp_path: Path) -> None:
+    dat = tmp_path / "nes.xml"
+    dat.write_text(
+        """<datafile>
+  <header><name>NES</name></header>
+  <game name="Game (USA)"><rom name="Game (USA).nes" size="4" crc="adf3f363"/></game>
+  <game name="Other (USA)"><rom name="Other (USA).nes" crc="deadbeef"/></game>
+</datafile>""",
+        encoding="utf-8",
+    )
+    index = DatIndex(parse_logiqx_dat(dat))
+    md5 = "0" * 32
+    sha1 = "0" * 40
+    assert index.match("adf3f363", md5, sha1, 4) is not None
+    assert index.match("adf3f363", md5, sha1, 5) is None
+    assert index.match("deadbeef", md5, sha1, 123) is not None
