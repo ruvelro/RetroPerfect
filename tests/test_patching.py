@@ -173,3 +173,42 @@ def test_apply_ppf2_checks_size_and_blockcheck() -> None:
     wrong_size = header.replace(len(source).to_bytes(4, "little"), (123).to_bytes(4, "little"))
     with pytest.raises(ValueError, match="tamaño"):
         apply_ppf(source, wrong_size + record)
+
+
+def _aps_header(patch_type: int, crc: bytes = b"\x00" * 8) -> bytes:
+    header = b"APS10" + bytes([patch_type]) + bytes([0]) + b"desc".ljust(50, b"\x00")
+    if patch_type == 1:
+        header += bytes([1]) + b"NSM" + crc + bytes(5)
+    return header
+
+
+def test_apply_aps_simple_with_rle() -> None:
+    from retroperfect.patching import apply_aps
+
+    source = bytes(32)
+    records = (4).to_bytes(4, "little") + bytes([2]) + b"AB"
+    records += (10).to_bytes(4, "little") + bytes([0]) + bytes([0xFF]) + bytes([3])  # RLE: 3x 0xFF
+    patch = _aps_header(0) + (32).to_bytes(4, "little") + records
+    patched = apply_aps(source, patch)
+    assert patched[4:6] == b"AB"
+    assert patched[10:13] == b"\xff\xff\xff"
+    assert len(patched) == 32
+
+
+def test_apply_aps_n64_validates_header_crc() -> None:
+    import pytest
+
+    from retroperfect.patching import apply_aps
+
+    crc = bytes(range(8))
+    source = bytearray(64)
+    source[0x10:0x18] = crc
+    source = bytes(source)
+    records = (0x20).to_bytes(4, "little") + bytes([1]) + b"Z"
+    patch = _aps_header(1, crc) + (64).to_bytes(4, "little") + records
+    patched = apply_aps(source, patch)
+    assert patched[0x20] == ord("Z")
+
+    wrong = _aps_header(1, b"\xaa" * 8) + (64).to_bytes(4, "little") + records
+    with pytest.raises(ValueError, match="CRC de cabecera"):
+        apply_aps(source, wrong)

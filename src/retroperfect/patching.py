@@ -11,8 +11,11 @@ from urllib.parse import urlparse
 from .http import http_get
 from .paths import data_dir
 
-SUPPORTED_PATCH_EXTENSIONS = {".ips", ".bps", ".ups", ".xdelta", ".vcdiff", ".ppf"}
-KNOWN_UNSUPPORTED_PATCH_EXTENSIONS = {".aps", ".rup"}
+SUPPORTED_PATCH_EXTENSIONS = {".ips", ".bps", ".ups", ".xdelta", ".vcdiff", ".ppf", ".aps"}
+KNOWN_UNSUPPORTED_PATCH_EXTENSIONS = {".rup"}
+
+APS_DESCRIPTION_SIZE = 50
+APS_N64_HEADER_EXTRA = 17  # formato original (1) + cart id (3) + CRC (8) + relleno (5)
 
 PPF_DESCRIPTION_SIZE = 50
 PPF_BLOCKCHECK_SIZE = 1024
@@ -69,6 +72,8 @@ def apply_patch_bytes(source: bytes, patch: PatchPayload) -> bytes:
         return apply_xdelta(source, patch.data)
     if patch.suffix == ".ppf":
         return apply_ppf(source, patch.data)
+    if patch.suffix == ".aps":
+        return apply_aps(source, patch.data)
     raise ValueError(f"Formato de parche no soportado: {patch.suffix}")
 
 
@@ -245,6 +250,59 @@ def _ppf_write(output: bytearray, offset: int, data: bytes) -> None:
     if end > len(output):
         output.extend(b"\0" * (end - len(output)))
     output[offset:end] = data
+
+
+def apply_aps(source: bytes, patch: bytes) -> bytes:
+    """Aplica parches APS de Nintendo 64 (tipos simple y N64-specific)."""
+    if not patch.startswith(b"APS10"):
+        raise ValueError("APS inválido: cabecera APS10 no encontrada.")
+    if len(patch) < 7 + APS_DESCRIPTION_SIZE:
+        raise ValueError("APS inválido: demasiado pequeño.")
+    patch_type = patch[5]
+    encoding = patch[6]
+    if encoding != 0:
+        raise ValueError(f"APS con codificación no soportada: {encoding}.")
+    index = 7 + APS_DESCRIPTION_SIZE
+    if patch_type == 1:
+        if len(patch) < index + APS_N64_HEADER_EXTRA + 4:
+            raise ValueError("APS N64 inválido: cabecera incompleta.")
+        header_crc = patch[index + 4 : index + 12]
+        if len(source) >= 0x18 and source[0x10:0x18] != header_crc:
+            raise ValueError("APS no aplicable: el CRC de cabecera de la ROM origen no coincide.")
+        index += APS_N64_HEADER_EXTRA
+    elif patch_type != 0:
+        raise ValueError(f"APS de tipo no soportado: {patch_type}.")
+    if len(patch) < index + 4:
+        raise ValueError("APS inválido: falta el tamaño de destino.")
+    target_size = int.from_bytes(patch[index : index + 4], "little")
+    index += 4
+
+    output = bytearray(target_size)
+    output[: min(len(source), target_size)] = source[:target_size]
+    while index < len(patch):
+        if index + 5 > len(patch):
+            raise ValueError("APS inválido: registro incompleto.")
+        offset = int.from_bytes(patch[index : index + 4], "little")
+        index += 4
+        size = patch[index]
+        index += 1
+        if size == 0:
+            if index + 2 > len(patch):
+                raise ValueError("APS inválido: registro RLE incompleto.")
+            value = patch[index]
+            count = patch[index + 1]
+            index += 2
+            data = bytes([value]) * count
+        else:
+            if index + size > len(patch):
+                raise ValueError("APS inválido: datos incompletos.")
+            data = patch[index : index + size]
+            index += size
+        end = offset + len(data)
+        if end > len(output):
+            output.extend(b"\0" * (end - len(output)))
+        output[offset:end] = data
+    return bytes(output[:target_size]) if target_size else bytes(output)
 
 
 def apply_xdelta(source: bytes, patch: bytes) -> bytes:
