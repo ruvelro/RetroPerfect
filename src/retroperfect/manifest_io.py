@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import hashlib
 import html
-import json
 import shutil
 import zipfile
 from pathlib import Path

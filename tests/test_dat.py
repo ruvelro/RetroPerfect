@@ -1,9 +1,8 @@
-from pathlib import Path
 import zipfile
+from pathlib import Path
 
 from retroperfect.dat import DatIndex, parse_clrmamepro_dat, parse_logiqx_dat
-from retroperfect.dat_manager import compare_dats, import_dat_file, inspect_dat, suggest_dat_for_source, validate_setup
-from retroperfect.dat_manager import download_and_import_url
+from retroperfect.dat_manager import compare_dats, download_and_import_url, import_dat_file, inspect_dat, suggest_dat_for_source, validate_setup
 
 
 def test_parse_parent_clone_dat(tmp_path: Path) -> None:

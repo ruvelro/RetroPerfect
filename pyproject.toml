@@ -21,6 +21,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2.0",
+  "ruff>=0.6.0",
+  "mypy>=1.10.0",
+  "types-PyYAML",
+  "types-requests",
 ]
 
 [project.scripts]
@@ -32,4 +36,35 @@ packages = ["src/retroperfect"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 200
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+  "E501",   # líneas largas: el límite lo marca line-length solo como guía
+  "B008",   # typer usa llamadas en defaults de argumentos
+  "SIM105", # contextlib.suppress no siempre es más claro
+  "SIM108", # el operador ternario no siempre es más claro
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Los `with` anidados son el idioma de layout de NiceGUI
+"src/retroperfect/gui.py" = ["SIM117"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["retroperfect"]
+ignore_missing_imports = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+# El estado global de la GUI (dict[str, object]) genera falsos attr-defined;
+# pendiente de tipar cuando se trocee gui.py.
+module = "retroperfect.gui"
+check_untyped_defs = false
+disable_error_code = ["attr-defined", "union-attr", "arg-type", "index", "operator", "assignment"]
 

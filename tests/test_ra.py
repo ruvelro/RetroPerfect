@@ -4,7 +4,7 @@ import hashlib
 import json
 
 from retroperfect.hashing import hash_bytes
-from retroperfect.models import Platform, ScanResult, ScannedRom, DetectedMetadata
+from retroperfect.models import DetectedMetadata, Platform, ScannedRom, ScanResult
 from retroperfect.ra import annotate_scan_with_ra, init_cache
 
 

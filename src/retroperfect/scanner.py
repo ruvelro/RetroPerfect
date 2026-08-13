@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import uuid
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .dat import DatIndex
 from .hashing import hash_bytes, hash_stream
 from .metadata import parse_no_intro_name
-from .models import Platform, RomHash, ScanResult, ScannedRom
+from .models import Platform, RomHash, ScannedRom, ScanResult
 from .platforms import platform_spec
-
 
 ProgressCallback = Callable[[dict[str, object]], None]
 

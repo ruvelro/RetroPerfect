@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -127,7 +127,7 @@ def inspect_dat(path: Path, source: str = "manual", platform: Platform | None = 
         id=str(path.resolve()),
         path=str(path),
         source=source,
-        imported_at=datetime.now(timezone.utc),
+        imported_at=datetime.now(UTC),
         format=fmt,
         name=catalog.name or path.stem,
         description=catalog.description,

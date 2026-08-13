@@ -5,7 +5,6 @@ from pathlib import Path
 from .models import ScanResult
 from .paths import project_state_dir
 
-
 SCAN_RETENTION = 20
 
 

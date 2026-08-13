@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Iterable
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
@@ -15,7 +15,6 @@ from .metadata import parse_no_intro_name
 from .models import Platform, ScanResult
 from .paths import config_dir, data_dir
 from .platforms import platform_spec
-
 
 RA_API_ROOT = "https://retroachievements.org/API"
 RA_DEFAULT_REQUEST_DELAY_SECONDS = 1.0
@@ -103,7 +102,7 @@ def _store_sync_meta(conn: sqlite3.Connection, platform: Platform, kind: str, co
             synced_at = excluded.synced_at,
             count = excluded.count
         """,
-        (platform.value, kind, datetime.now(timezone.utc).isoformat(timespec="seconds"), count),
+        (platform.value, kind, datetime.now(UTC).isoformat(timespec="seconds"), count),
     )
 
 
@@ -115,7 +114,7 @@ def _safe_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
-def _request_json(endpoint: str, params: dict[str, object], *, max_retries: int = 6) -> object:
+def _request_json(endpoint: str, params: dict[str, str | int], *, max_retries: int = 6) -> object:
     url = f"{RA_API_ROOT}/{endpoint}"
     last_status = None
     for attempt in range(max_retries + 1):
@@ -156,6 +155,8 @@ def sync_ra_hashes(platform: Platform, username: str | None = None, api_key: str
             if not isinstance(row, dict):
                 continue
             raw_id = row.get("ID") or row.get("GameID")
+            if raw_id is None:
+                continue
             try:
                 game_id = int(raw_id)
             except (TypeError, ValueError):

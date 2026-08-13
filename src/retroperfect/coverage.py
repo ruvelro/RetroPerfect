@@ -55,9 +55,9 @@ def build_coverage(scan: ScanResult, catalog: DatCatalog | None = None, manifest
     if manifest:
         rom_by_id = {rom.id: rom for rom in scan.roms}
         for entry in manifest.entries:
-            rom = rom_by_id.get(entry.rom_id)
-            if rom:
-                group_key = _rom_coverage_key(rom)
+            kept_rom = rom_by_id.get(entry.rom_id)
+            if kept_rom:
+                group_key = _rom_coverage_key(kept_rom)
                 kept_by_group[group_key].append(entry.source_path)
                 keep_buckets[group_key].add(entry.bucket.value)
 

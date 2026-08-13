@@ -1,8 +1,8 @@
-from pathlib import Path
-import zipfile
-import hashlib
 import binascii
+import hashlib
 import json
+import zipfile
+from pathlib import Path
 
 from retroperfect.dat import DatIndex, parse_dat, parse_logiqx_dat
 from retroperfect.models import ActionMode, ExportLayout, OutputBucket, Platform, ProfileOutput, SelectionProfile

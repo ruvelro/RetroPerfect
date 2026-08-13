@@ -8,7 +8,6 @@ import yaml
 from .models import ExportLayout, OutputBucket, ProfileOutput, SelectionProfile
 from .paths import config_dir
 
-
 DEFAULT_PROFILE = SelectionProfile(
     name="default",
     outputs=[

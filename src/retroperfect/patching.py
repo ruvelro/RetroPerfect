@@ -12,7 +12,6 @@ import requests
 
 from .paths import data_dir
 
-
 SUPPORTED_PATCH_EXTENSIONS = {".ips", ".bps"}
 KNOWN_UNSUPPORTED_PATCH_EXTENSIONS = {".ups", ".xdelta", ".vcdiff", ".ppf", ".aps", ".rup"}
 

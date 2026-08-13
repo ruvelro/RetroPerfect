@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -286,7 +286,7 @@ class ScanResult(BaseModel):
     platform: Platform
     input_path: str
     dat_path: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     roms: list[ScannedRom] = Field(default_factory=list)
     unmatched_files: list[str] = Field(default_factory=list)
 
@@ -339,7 +339,7 @@ class ManifestEntry(BaseModel):
 class Manifest(BaseModel):
     id: str
     scan_id: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     platform: Platform
     profile_snapshot: dict[str, Any]
     entries: list[ManifestEntry] = Field(default_factory=list)

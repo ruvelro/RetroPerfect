@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
-from pathlib import Path
-import re
 import binascii
 import hashlib
+import re
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 from .metadata import parse_no_intro_name
 from .models import DatCatalog, DatGame, DatRom
@@ -204,7 +204,7 @@ class DatIndex:
         if direct:
             return direct
         if filename:
-            for game, header in self.headered_candidates_by_name.get(_name_key(filename), []):
+            for _game, header in self.headered_candidates_by_name.get(_name_key(filename), []):
                 match = self._match_headered_payload(data, header)
                 if match:
                     return match

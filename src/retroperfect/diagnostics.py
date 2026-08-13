@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
-import zipfile
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
 
 from .coverage import CoverageSummary
 from .dat_manager import DatMetadata, inspect_dat, list_installed_dats
-from .models import DatCatalog, Manifest, Platform, ScanResult
+from .models import Manifest, Platform, ScanResult
 from .platforms import platform_spec
 
 
@@ -106,7 +106,6 @@ def detect_dat_warnings(platform: Platform, source: Path | None, dat: Path | Non
         return [DiagnosticRow(status="MISS", item="DAT", detail=f"No se pudo leer el DAT: {exc}", recommendation="Importa un DAT válido .dat/.xml/.zip.")]
 
     dat_text = " ".join([metadata.name, metadata.description or "", Path(metadata.path).name]).lower()
-    source_text = str(source or "").lower()
     if metadata.platform not in {None, platform.value}:
         rows.append(DiagnosticRow(status="WARN", item="Plataforma DAT", detail=f"El DAT parece {metadata.platform}, pero la plataforma activa es {platform.value}.", recommendation="Usa un DAT de la misma plataforma."))
     if not metadata.parent_clone:
@@ -222,12 +221,10 @@ def preflight_source_warnings(platform: Platform, source: Path | None, dat: Path
     if unexpected and len(unexpected) >= max(1, len(suffix_counts) // 2):
         detail = ", ".join(f"{suffix}: {count}" for suffix, count in sorted(unexpected.items())[:6])
         rows.append(DiagnosticRow(status="WARN", item="Origen", detail=f"Muchas extensiones no parecen de {spec.short_name}: {detail}", recommendation=f"Comprueba la plataforma o usa un origen con {spec.extension_label}."))
-    if platform == Platform.N64:
-        if suffix_counts.get(".v64") and dat and "bigendian" in dat.name.lower():
-            rows.append(DiagnosticRow(status="WARN", item="Preflight N64", detail="El origen parece ByteSwapped (.v64) y el DAT BigEndian.", recommendation="Se intentará normalizar, pero lo más claro es usar romset .z64 BigEndian."))
-    if platform == Platform.A7800:
-        if suffix_counts.get(".bin") and dat and "a78" in dat.name.lower():
-            rows.append(DiagnosticRow(status="WARN", item="Preflight A7800", detail="El origen tiene BIN y el DAT parece A78.", recommendation="Mejor usar DAT/romset de la misma variante."))
+    if platform == Platform.N64 and suffix_counts.get(".v64") and dat and "bigendian" in dat.name.lower():
+        rows.append(DiagnosticRow(status="WARN", item="Preflight N64", detail="El origen parece ByteSwapped (.v64) y el DAT BigEndian.", recommendation="Se intentará normalizar, pero lo más claro es usar romset .z64 BigEndian."))
+    if platform == Platform.A7800 and suffix_counts.get(".bin") and dat and "a78" in dat.name.lower():
+        rows.append(DiagnosticRow(status="WARN", item="Preflight A7800", detail="El origen tiene BIN y el DAT parece A78.", recommendation="Mejor usar DAT/romset de la misma variante."))
     if spec.kind == "arcade":
         zip_count = suffix_counts.get(".zip", 0) + suffix_counts.get(".7z", 0)
         chd_count = suffix_counts.get(".chd", 0)
@@ -267,7 +264,7 @@ def _n64_dat_mode(text: str) -> str | None:
 def _n64_rom_mode(scan: ScanResult | None) -> str | None:
     if scan is None:
         return None
-    modes = Counter()
+    modes: Counter[str] = Counter()
     for rom in scan.roms:
         suffix = Path(rom.container_path).suffix.lower()
         if suffix == ".z64":

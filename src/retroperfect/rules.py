@@ -3,11 +3,10 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
-from .models import ActionMode, CandidateDecision, ExportLayout, Manifest, ManifestEntry, OutputBucket, ProfileOutput, ScanResult, ScannedRom, SelectionProfile
 from .metadata import parse_no_intro_name
+from .models import ActionMode, CandidateDecision, ExportLayout, Manifest, ManifestEntry, OutputBucket, ProfileOutput, ScannedRom, ScanResult, SelectionProfile
 from .platforms import platform_spec
 from .ra import RaPatchCandidate, find_ra_patch_candidates
-
 
 STRICT_1G1R_TAGS = {
     "Anniversary Collection",

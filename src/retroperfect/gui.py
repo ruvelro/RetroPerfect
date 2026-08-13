@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from collections import Counter, defaultdict
-from datetime import datetime
 import json
-from pathlib import Path
 import webbrowser
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+from typing import cast
 
 from nicegui import app, ui
 from pydantic import ValidationError
 
 from .coverage import build_coverage
-from .dat import DatCatalog, DatIndex, parse_dat
+from .dat import DatIndex, parse_dat
 from .dat_manager import compare_dats, download_and_import_source, download_and_import_url, import_dat_file, list_installed_dats, suggest_dat_for_source, validate_setup
 from .dat_sources import DAT_SOURCES, list_dat_sources
 from .diagnostics import build_needed_rows, build_patch_queue, build_perfect_audit, detect_dat_warnings
@@ -24,7 +25,6 @@ from .ra import annotate_scan_with_ra, credentials_path, ra_cache_count, ra_sync
 from .rules import build_manifest, explain_score
 from .scanner import scan_directory
 from .storage import save_scan
-
 
 REGIONS = ["Spain", "Europe", "World", "USA", "Japan", "Asia", "Brazil", "China", "Korea"]
 LANGUAGES = ["Spanish", "English", "Multi", "Japanese", "French", "German", "Italian", "Portuguese"]
@@ -78,7 +78,7 @@ def _small_button(label: str, icon: str, on_click) -> ui.button:
 
 
 def _log_activity(message: str, level: str = "INFO") -> None:
-    rows = list(state.get("activity", []))
+    rows = list(cast(list[dict[str, str]], state.get("activity") or []))
     rows.insert(
         0,
         {
@@ -91,7 +91,7 @@ def _log_activity(message: str, level: str = "INFO") -> None:
 
 
 def _activity_rows() -> list[dict[str, str]]:
-    return list(state.get("activity", []))
+    return list(cast(list[dict[str, str]], state.get("activity") or []))
 
 
 def _open_path(path: Path | str | None) -> None:
@@ -1755,7 +1755,7 @@ def build_ui() -> None:
                             refresh_coverage()
                             refresh_decisions()
                         except Exception as exc:
-                            current = state.get("ra_details_progress", {})
+                            current = cast(dict[str, object], state.get("ra_details_progress") or {})
                             state["ra_details_progress"] = {**current, "running": False}
                             ra_status.text = f"Error detalles RA: {exc}"
 
@@ -1787,205 +1787,204 @@ def build_ui() -> None:
 
                     ui.timer(0.3, refresh_ra_details_progress)
 
-            with ui.tab_panel(dats_tab).classes("p-0"):
-                with ui.column().classes(_panel_class()):
-                    ui.label("Biblioteca de DATs").classes("text-lg font-semibold")
-                    dat_manager_status = ui.label("Aqui se descargan/importan DATs, se registran con metadatos y se elige cual usar para el escaneo actual.").classes("text-sm text-gray-600")
-                    ui.label("Fuentes online").classes("text-md font-semibold")
-                    online_table = ui.table(
-                        columns=[
-                            {"name": "label", "label": "Fuente", "field": "label", "sortable": True, "align": "left"},
-                            {"name": "format", "label": "Formato", "field": "format", "align": "left"},
-                            {"name": "direct", "label": "Descarga directa", "field": "direct", "sortable": True},
-                            {"name": "notes", "label": "Notas", "field": "notes", "align": "left"},
-                        ],
-                        rows=_online_dat_rows(_current_platform()),
-                        row_key="id",
-                        selection="single",
-                        pagination=6,
-                    ).classes("w-full rp-table-card")
+            with ui.tab_panel(dats_tab).classes("p-0"), ui.column().classes(_panel_class()):
+                ui.label("Biblioteca de DATs").classes("text-lg font-semibold")
+                dat_manager_status = ui.label("Aqui se descargan/importan DATs, se registran con metadatos y se elige cual usar para el escaneo actual.").classes("text-sm text-gray-600")
+                ui.label("Fuentes online").classes("text-md font-semibold")
+                online_table = ui.table(
+                    columns=[
+                        {"name": "label", "label": "Fuente", "field": "label", "sortable": True, "align": "left"},
+                        {"name": "format", "label": "Formato", "field": "format", "align": "left"},
+                        {"name": "direct", "label": "Descarga directa", "field": "direct", "sortable": True},
+                        {"name": "notes", "label": "Notas", "field": "notes", "align": "left"},
+                    ],
+                    rows=_online_dat_rows(_current_platform()),
+                    row_key="id",
+                    selection="single",
+                    pagination=6,
+                ).classes("w-full rp-table-card")
 
-                    async def download_online_click() -> None:
-                        selected = online_table.selected
-                        if not selected:
-                            dat_manager_status.text = "Selecciona una fuente online."
-                            return
+                async def download_online_click() -> None:
+                    selected = online_table.selected
+                    if not selected:
+                        dat_manager_status.text = "Selecciona una fuente online."
+                        return
+                    try:
+                        imported = await asyncio.to_thread(download_and_import_source, selected[0]["id"])
+                        dat.value = imported[0].path
+                        dat_manager_status.text = f"Descargados/importados {len(imported)} DATs. Activo: {imported[0].name}"
+                        refresh_dat_table()
+                    except Exception as exc:
+                        dat_manager_status.text = f"No se pudo descargar automáticamente: {exc}"
+
+                def open_online_click() -> None:
+                    selected = online_table.selected
+                    if not selected:
+                        dat_manager_status.text = "Selecciona una fuente online."
+                        return
+                    webbrowser.open(selected[0]["url"])
+                    dat_manager_status.text = "Fuente abierta en el navegador. Si descarga un ZIP, impórtalo aquí."
+
+                custom_url = ui.input("URL directa a DAT/XML/ZIP").props("outlined").classes("w-full")
+                custom_filename = ui.input("Nombre de archivo opcional").props("outlined").classes("w-96")
+
+                async def download_url_click() -> None:
+                    if not custom_url.value:
+                        dat_manager_status.text = "Introduce una URL directa."
+                        return
+                    try:
+                        imported = await asyncio.to_thread(download_and_import_url, custom_url.value, custom_filename.value or None)
+                        dat.value = imported[0].path
+                        dat_manager_status.text = f"URL descargada/importada: {imported[0].name}"
+                        refresh_dat_table()
+                    except Exception as exc:
+                        dat_manager_status.text = f"No se pudo descargar la URL: {exc}"
+
+                with ui.row():
+                    ui.button("Descargar fuente", icon="download", on_click=download_online_click).props("color=primary")
+                    ui.button("Abrir fuente", icon="open_in_browser", on_click=open_online_click).props("outline")
+                    ui.button("Descargar URL", icon="link", on_click=download_url_click).props("outline")
+
+                ui.separator()
+                ui.label("Descarga por lote").classes("text-md font-semibold")
+                ui.label("Automático usa fuentes directas públicas. DAT-o-MATIC queda como fuente oficial asistida cuando requiere navegador o sesión.").classes("text-sm text-gray-600")
+                with ui.row().classes("items-end gap-3"):
+                    batch_scope = ui.select(
+                        {"current": "Solo plataforma actual", "all": "Todas con fuente directa"},
+                        value="current",
+                        label="Alcance",
+                    ).props("outlined").classes("w-64")
+                    batch_limit = ui.number("Límite", value=20, min=1, max=300, step=10).props("outlined").classes("w-32")
+                    batch_progress = ui.linear_progress(value=0, show_value=False).props("instant-feedback").classes("w-64")
+                batch_table = ui.table(
+                    columns=[
+                        {"name": "platform", "label": "Plataforma", "field": "platform", "sortable": True, "align": "left"},
+                        {"name": "source", "label": "Fuente", "field": "source", "align": "left"},
+                        {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
+                    ],
+                    rows=[],
+                    pagination=6,
+                ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+
+                async def batch_download_click() -> None:
+                    source_ids = _direct_dat_batch_candidates(batch_scope.value, _current_platform(), int(batch_limit.value or 20))
+                    if not source_ids:
+                        dat_manager_status.text = "No hay fuentes directas para este alcance."
+                        return
+                    rows = []
+                    for source_id in source_ids:
+                        source_item = next(item for item in DAT_SOURCES if item.id == source_id)
+                        rows.append({"platform": platform_spec(source_item.platform).short_name, "source": source_item.label, "status": "pendiente"})
+                    batch_table.rows = rows
+                    batch_table.update()
+                    imported_total = 0
+                    for index, source_id in enumerate(source_ids, start=1):
+                        source_item = next(item for item in DAT_SOURCES if item.id == source_id)
+                        batch_progress.value = (index - 1) / len(source_ids)
                         try:
-                            imported = await asyncio.to_thread(download_and_import_source, selected[0]["id"])
-                            dat.value = imported[0].path
-                            dat_manager_status.text = f"Descargados/importados {len(imported)} DATs. Activo: {imported[0].name}"
-                            refresh_dat_table()
+                            imported = await asyncio.to_thread(download_and_import_source, source_id)
+                            imported_total += len(imported)
+                            rows[index - 1]["status"] = f"OK ({len(imported)})"
+                            dat_manager_status.text = f"Descargado {index}/{len(source_ids)}: {source_item.label}"
                         except Exception as exc:
-                            dat_manager_status.text = f"No se pudo descargar automáticamente: {exc}"
-
-                    def open_online_click() -> None:
-                        selected = online_table.selected
-                        if not selected:
-                            dat_manager_status.text = "Selecciona una fuente online."
-                            return
-                        webbrowser.open(selected[0]["url"])
-                        dat_manager_status.text = "Fuente abierta en el navegador. Si descarga un ZIP, impórtalo aquí."
-
-                    custom_url = ui.input("URL directa a DAT/XML/ZIP").props("outlined").classes("w-full")
-                    custom_filename = ui.input("Nombre de archivo opcional").props("outlined").classes("w-96")
-
-                    async def download_url_click() -> None:
-                        if not custom_url.value:
-                            dat_manager_status.text = "Introduce una URL directa."
-                            return
-                        try:
-                            imported = await asyncio.to_thread(download_and_import_url, custom_url.value, custom_filename.value or None)
-                            dat.value = imported[0].path
-                            dat_manager_status.text = f"URL descargada/importada: {imported[0].name}"
-                            refresh_dat_table()
-                        except Exception as exc:
-                            dat_manager_status.text = f"No se pudo descargar la URL: {exc}"
-
-                    with ui.row():
-                        ui.button("Descargar fuente", icon="download", on_click=download_online_click).props("color=primary")
-                        ui.button("Abrir fuente", icon="open_in_browser", on_click=open_online_click).props("outline")
-                        ui.button("Descargar URL", icon="link", on_click=download_url_click).props("outline")
-
-                    ui.separator()
-                    ui.label("Descarga por lote").classes("text-md font-semibold")
-                    ui.label("Automático usa fuentes directas públicas. DAT-o-MATIC queda como fuente oficial asistida cuando requiere navegador o sesión.").classes("text-sm text-gray-600")
-                    with ui.row().classes("items-end gap-3"):
-                        batch_scope = ui.select(
-                            {"current": "Solo plataforma actual", "all": "Todas con fuente directa"},
-                            value="current",
-                            label="Alcance",
-                        ).props("outlined").classes("w-64")
-                        batch_limit = ui.number("Límite", value=20, min=1, max=300, step=10).props("outlined").classes("w-32")
-                        batch_progress = ui.linear_progress(value=0, show_value=False).props("instant-feedback").classes("w-64")
-                    batch_table = ui.table(
-                        columns=[
-                            {"name": "platform", "label": "Plataforma", "field": "platform", "sortable": True, "align": "left"},
-                            {"name": "source", "label": "Fuente", "field": "source", "align": "left"},
-                            {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
-                        ],
-                        rows=[],
-                        pagination=6,
-                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
-
-                    async def batch_download_click() -> None:
-                        source_ids = _direct_dat_batch_candidates(batch_scope.value, _current_platform(), int(batch_limit.value or 20))
-                        if not source_ids:
-                            dat_manager_status.text = "No hay fuentes directas para este alcance."
-                            return
-                        rows = []
-                        for source_id in source_ids:
-                            source_item = next(item for item in DAT_SOURCES if item.id == source_id)
-                            rows.append({"platform": platform_spec(source_item.platform).short_name, "source": source_item.label, "status": "pendiente"})
+                            rows[index - 1]["status"] = f"Error: {exc}"
                         batch_table.rows = rows
                         batch_table.update()
-                        imported_total = 0
-                        for index, source_id in enumerate(source_ids, start=1):
-                            source_item = next(item for item in DAT_SOURCES if item.id == source_id)
-                            batch_progress.value = (index - 1) / len(source_ids)
-                            try:
-                                imported = await asyncio.to_thread(download_and_import_source, source_id)
-                                imported_total += len(imported)
-                                rows[index - 1]["status"] = f"OK ({len(imported)})"
-                                dat_manager_status.text = f"Descargado {index}/{len(source_ids)}: {source_item.label}"
-                            except Exception as exc:
-                                rows[index - 1]["status"] = f"Error: {exc}"
-                            batch_table.rows = rows
-                            batch_table.update()
-                        batch_progress.value = 1
-                        dat_manager_status.text = f"Lote terminado: {imported_total} DATs importados de {len(source_ids)} fuentes."
-                        _log_activity(f"Lote DAT terminado: {imported_total} DATs importados", "OK")
-                        refresh_dat_table()
-                        refresh_needed_table()
+                    batch_progress.value = 1
+                    dat_manager_status.text = f"Lote terminado: {imported_total} DATs importados de {len(source_ids)} fuentes."
+                    _log_activity(f"Lote DAT terminado: {imported_total} DATs importados", "OK")
+                    refresh_dat_table()
+                    refresh_needed_table()
 
-                    ui.button("Descargar lote directo", icon="cloud_download", on_click=batch_download_click).props("outline")
+                ui.button("Descargar lote directo", icon="cloud_download", on_click=batch_download_click).props("outline")
 
-                    ui.separator()
-                    ui.label("DAT-o-MATIC: cobertura pendiente en RetroPerfect").classes("text-md font-semibold")
-                    ui.label("La lista se basa en la tabla pública de sistemas de No-Intro; DAT-o-MATIC puede variar y algunos sistemas privados requieren sesión.").classes("text-sm text-gray-600")
-                    datomatic_gap_table = ui.table(
-                        columns=[
-                            {"name": "group", "label": "Grupo", "field": "group", "sortable": True, "align": "left"},
-                            {"name": "platform", "label": "Plataformas/variantes", "field": "platform", "align": "left"},
-                            {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
-                        ],
-                        rows=DATOMATIC_GAP_ROWS,
-                        pagination=8,
-                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+                ui.separator()
+                ui.label("DAT-o-MATIC: cobertura pendiente en RetroPerfect").classes("text-md font-semibold")
+                ui.label("La lista se basa en la tabla pública de sistemas de No-Intro; DAT-o-MATIC puede variar y algunos sistemas privados requieren sesión.").classes("text-sm text-gray-600")
+                ui.table(
+                    columns=[
+                        {"name": "group", "label": "Grupo", "field": "group", "sortable": True, "align": "left"},
+                        {"name": "platform", "label": "Plataformas/variantes", "field": "platform", "align": "left"},
+                        {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
+                    ],
+                    rows=DATOMATIC_GAP_ROWS,
+                    pagination=8,
+                ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
 
-                    ui.separator()
-                    ui.label("Importación local").classes("text-md font-semibold")
-                    import_path = ui.input("Archivo DAT/XML/ZIP a importar").props("outlined readonly").classes("w-full")
-                    import_dialog = _path_picker(import_path, choose="file", suffixes={".dat", ".xml", ".zip"})
-                    with ui.row():
-                        ui.button("Buscar DAT/ZIP", icon="upload_file", on_click=import_dialog.open).props("outline")
+                ui.separator()
+                ui.label("Importación local").classes("text-md font-semibold")
+                import_path = ui.input("Archivo DAT/XML/ZIP a importar").props("outlined readonly").classes("w-full")
+                import_dialog = _path_picker(import_path, choose="file", suffixes={".dat", ".xml", ".zip"})
+                with ui.row():
+                    ui.button("Buscar DAT/ZIP", icon="upload_file", on_click=import_dialog.open).props("outline")
 
-                        async def import_click() -> None:
-                            if not import_path.value:
-                                dat_manager_status.text = "Selecciona un DAT, XML o ZIP."
-                                return
-                            try:
-                                imported = await asyncio.to_thread(import_dat_file, Path(import_path.value))
-                                dat.value = imported[0].path
-                                dat_manager_status.text = f"Importados {len(imported)} DATs. Usando: {imported[0].name}"
-                                refresh_dat_table()
-                            except Exception as exc:
-                                dat_manager_status.text = f"No se pudo importar: {exc}"
-
-                        ui.button("Importar", icon="archive", on_click=import_click).props("color=primary")
-                    dat_table = ui.table(
-                        columns=[
-                            {"name": "name", "label": "Nombre", "field": "name", "sortable": True, "align": "left"},
-                            {"name": "platform", "label": "Plataforma", "field": "platform", "sortable": True, "align": "left"},
-                            {"name": "source", "label": "Fuente", "field": "source", "sortable": True, "align": "left"},
-                            {"name": "format", "label": "Formato", "field": "format", "sortable": True, "align": "left"},
-                            {"name": "games", "label": "Juegos", "field": "games", "sortable": True, "align": "right"},
-                            {"name": "roms", "label": "ROMs", "field": "roms", "sortable": True, "align": "right"},
-                            {"name": "pc", "label": "P/C", "field": "pc", "sortable": True, "align": "center"},
-                            {"name": "header", "label": "Header", "field": "header", "sortable": True, "align": "center"},
-                            {"name": "recommended", "label": "Recomendado", "field": "recommended", "sortable": True, "align": "center"},
-                            {"name": "regions", "label": "Regiones", "field": "regions", "align": "left"},
-                            {"name": "notes", "label": "Notas", "field": "notes", "align": "left"},
-                        ],
-                        rows=[],
-                        row_key="id",
-                        selection="multiple",
-                        pagination=12,
-                    ).classes("w-full rp-table-card")
-                    compare_status = ui.label().classes("text-sm text-gray-600")
-
-                    def refresh_dat_table() -> None:
-                        dat_table.rows = _dat_rows(_current_platform())
-                        dat_table.update()
-
-                    def use_selected_dat() -> None:
-                        selected = dat_table.selected
-                        if not selected:
-                            dat_manager_status.text = "Selecciona un DAT instalado."
-                            return
-                        dat.value = selected[0]["path"]
-                        dat_manager_status.text = f"DAT activo: {selected[0]['name']}"
-
-                    def compare_selected_dats() -> None:
-                        selected = dat_table.selected
-                        if len(selected) != 2:
-                            compare_status.text = "Selecciona exactamente dos DATs para comparar."
+                    async def import_click() -> None:
+                        if not import_path.value:
+                            dat_manager_status.text = "Selecciona un DAT, XML o ZIP."
                             return
                         try:
-                            comparison = compare_dats(Path(selected[0]["path"]), Path(selected[1]["path"]))
-                            compare_status.text = (
-                                f"{comparison.left_name} vs {comparison.right_name}: "
-                                f"comunes {comparison.common_games} juegos / {comparison.common_roms} ROMs; "
-                                f"solo primero {comparison.left_only_games} juegos / {comparison.left_only_roms} ROMs; "
-                                f"solo segundo {comparison.right_only_games} juegos / {comparison.right_only_roms} ROMs."
-                            )
+                            imported = await asyncio.to_thread(import_dat_file, Path(import_path.value))
+                            dat.value = imported[0].path
+                            dat_manager_status.text = f"Importados {len(imported)} DATs. Usando: {imported[0].name}"
+                            refresh_dat_table()
                         except Exception as exc:
-                            compare_status.text = f"No se pudo comparar: {exc}"
+                            dat_manager_status.text = f"No se pudo importar: {exc}"
 
-                    with ui.row():
-                        ui.button("Usar seleccionado", icon="check", on_click=use_selected_dat).props("color=primary")
-                        ui.button("Comparar dos DATs", icon="compare_arrows", on_click=compare_selected_dats).props("outline")
-                        ui.button("Refrescar", icon="refresh", on_click=refresh_dat_table).props("flat")
-                    refresh_dat_table()
+                    ui.button("Importar", icon="archive", on_click=import_click).props("color=primary")
+                dat_table = ui.table(
+                    columns=[
+                        {"name": "name", "label": "Nombre", "field": "name", "sortable": True, "align": "left"},
+                        {"name": "platform", "label": "Plataforma", "field": "platform", "sortable": True, "align": "left"},
+                        {"name": "source", "label": "Fuente", "field": "source", "sortable": True, "align": "left"},
+                        {"name": "format", "label": "Formato", "field": "format", "sortable": True, "align": "left"},
+                        {"name": "games", "label": "Juegos", "field": "games", "sortable": True, "align": "right"},
+                        {"name": "roms", "label": "ROMs", "field": "roms", "sortable": True, "align": "right"},
+                        {"name": "pc", "label": "P/C", "field": "pc", "sortable": True, "align": "center"},
+                        {"name": "header", "label": "Header", "field": "header", "sortable": True, "align": "center"},
+                        {"name": "recommended", "label": "Recomendado", "field": "recommended", "sortable": True, "align": "center"},
+                        {"name": "regions", "label": "Regiones", "field": "regions", "align": "left"},
+                        {"name": "notes", "label": "Notas", "field": "notes", "align": "left"},
+                    ],
+                    rows=[],
+                    row_key="id",
+                    selection="multiple",
+                    pagination=12,
+                ).classes("w-full rp-table-card")
+                compare_status = ui.label().classes("text-sm text-gray-600")
+
+                def refresh_dat_table() -> None:
+                    dat_table.rows = _dat_rows(_current_platform())
+                    dat_table.update()
+
+                def use_selected_dat() -> None:
+                    selected = dat_table.selected
+                    if not selected:
+                        dat_manager_status.text = "Selecciona un DAT instalado."
+                        return
+                    dat.value = selected[0]["path"]
+                    dat_manager_status.text = f"DAT activo: {selected[0]['name']}"
+
+                def compare_selected_dats() -> None:
+                    selected = dat_table.selected
+                    if len(selected) != 2:
+                        compare_status.text = "Selecciona exactamente dos DATs para comparar."
+                        return
+                    try:
+                        comparison = compare_dats(Path(selected[0]["path"]), Path(selected[1]["path"]))
+                        compare_status.text = (
+                            f"{comparison.left_name} vs {comparison.right_name}: "
+                            f"comunes {comparison.common_games} juegos / {comparison.common_roms} ROMs; "
+                            f"solo primero {comparison.left_only_games} juegos / {comparison.left_only_roms} ROMs; "
+                            f"solo segundo {comparison.right_only_games} juegos / {comparison.right_only_roms} ROMs."
+                        )
+                    except Exception as exc:
+                        compare_status.text = f"No se pudo comparar: {exc}"
+
+                with ui.row():
+                    ui.button("Usar seleccionado", icon="check", on_click=use_selected_dat).props("color=primary")
+                    ui.button("Comparar dos DATs", icon="compare_arrows", on_click=compare_selected_dats).props("outline")
+                    ui.button("Refrescar", icon="refresh", on_click=refresh_dat_table).props("flat")
+                refresh_dat_table()
 
             with ui.tab_panel(profile_tab).classes("p-0"):
                 controls: dict[str, object] = {}
@@ -2102,37 +2101,36 @@ def build_ui() -> None:
 
                     ui.button("Comparar presets con este escaneo", icon="compare", on_click=compare_profiles_click).props("outline")
 
-            with ui.tab_panel(scan_tab).classes("p-0"):
-                with ui.column().classes(_panel_class()):
-                    ui.label("Configuración activa").classes("text-lg font-semibold")
-                    with ui.grid(columns=4).classes("w-full gap-3"):
-                        active_platform = ui.label("Plataforma: NES / Famicom").classes("border border-gray-200 rounded-md p-3")
-                        active_source = ui.label("Origen: sin seleccionar").classes("border border-gray-200 rounded-md p-3")
-                        active_dat = ui.label("DAT: sin seleccionar").classes("border border-gray-200 rounded-md p-3")
-                        active_out = ui.label("Salida: sin seleccionar").classes("border border-gray-200 rounded-md p-3")
-                    def refresh_active_config() -> None:
-                        active_platform.text = f"Plataforma: {platform_spec(_current_platform()).short_name}"
-                        active_source.text = f"Origen: {source.value or 'sin seleccionar'}"
-                        active_dat.text = f"DAT: {dat.value or 'sin seleccionar'}"
-                        active_out.text = f"Salida: {outdir.value or 'sin seleccionar'}"
+            with ui.tab_panel(scan_tab).classes("p-0"), ui.column().classes(_panel_class()):
+                ui.label("Configuración activa").classes("text-lg font-semibold")
+                with ui.grid(columns=4).classes("w-full gap-3"):
+                    active_platform = ui.label("Plataforma: NES / Famicom").classes("border border-gray-200 rounded-md p-3")
+                    active_source = ui.label("Origen: sin seleccionar").classes("border border-gray-200 rounded-md p-3")
+                    active_dat = ui.label("DAT: sin seleccionar").classes("border border-gray-200 rounded-md p-3")
+                    active_out = ui.label("Salida: sin seleccionar").classes("border border-gray-200 rounded-md p-3")
+                def refresh_active_config() -> None:
+                    active_platform.text = f"Plataforma: {platform_spec(_current_platform()).short_name}"
+                    active_source.text = f"Origen: {source.value or 'sin seleccionar'}"
+                    active_dat.text = f"DAT: {dat.value or 'sin seleccionar'}"
+                    active_out.text = f"Salida: {outdir.value or 'sin seleccionar'}"
 
-                    scan_status = ui.label("Sin escaneo todavía.").classes("text-sm text-gray-600")
-                    scan_progress = ui.linear_progress(value=0, show_value=False).props("instant-feedback").classes("w-full")
-                    scan_progress_label = ui.label("0% · 0 / 0 archivos · 0 ROMs · 0 matches").classes("text-sm text-gray-600")
-                    scan_current_file = ui.label("").classes("text-xs text-gray-500")
-                    diagnostic_table = ui.table(
-                        columns=[
-                            {"name": "status", "label": "", "field": "status", "align": "center"},
-                            {"name": "item", "label": "Chequeo", "field": "item", "sortable": True, "align": "left"},
-                            {"name": "detail", "label": "Resultado", "field": "detail", "align": "left"},
-                            {"name": "recommendation", "label": "Qué hacer", "field": "recommendation", "align": "left"},
-                        ],
-                        rows=[],
-                        pagination=5,
-                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
-                    diagnostic_table.add_slot(
-                        "body-cell-status",
-                        """
+                scan_status = ui.label("Sin escaneo todavía.").classes("text-sm text-gray-600")
+                scan_progress = ui.linear_progress(value=0, show_value=False).props("instant-feedback").classes("w-full")
+                scan_progress_label = ui.label("0% · 0 / 0 archivos · 0 ROMs · 0 matches").classes("text-sm text-gray-600")
+                scan_current_file = ui.label("").classes("text-xs text-gray-500")
+                diagnostic_table = ui.table(
+                    columns=[
+                        {"name": "status", "label": "", "field": "status", "align": "center"},
+                        {"name": "item", "label": "Chequeo", "field": "item", "sortable": True, "align": "left"},
+                        {"name": "detail", "label": "Resultado", "field": "detail", "align": "left"},
+                        {"name": "recommendation", "label": "Qué hacer", "field": "recommendation", "align": "left"},
+                    ],
+                    rows=[],
+                    pagination=5,
+                ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+                diagnostic_table.add_slot(
+                    "body-cell-status",
+                    """
                         <q-td :props="props" class="rp-center">
                           <q-badge v-if="props.value === 'OK'" color="green" label="OK" />
                           <q-badge v-else-if="props.value === 'WARN'" color="amber" text-color="black" label="WARN" />
@@ -2140,163 +2138,162 @@ def build_ui() -> None:
                           <q-badge v-else color="blue-grey" label="INFO" />
                         </q-td>
                         """,
-                    )
-                    scan_table = ui.table(
+                )
+                scan_table = ui.table(
+                    columns=[
+                        {"name": "file", "label": "Archivo", "field": "file", "sortable": True, "align": "left"},
+                        {"name": "dat", "label": "DAT", "field": "dat", "sortable": True, "align": "left"},
+                        {"name": "ra", "label": "RA", "field": "ra", "sortable": True, "align": "center"},
+                        {"name": "region", "label": "Región", "field": "region", "align": "center"},
+                        {"name": "tags", "label": "Tags", "field": "tags", "align": "right"},
+                    ],
+                    rows=[],
+                    pagination=15,
+                ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+                scan_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                scan_table.add_slot("body-cell-region", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                scan_table.add_slot("body-cell-tags", '<q-td :props="props" class="rp-right">{{ props.value }}</q-td>')
+                ui.label("No coincidencias y duplicados").classes("text-md font-semibold")
+                with ui.grid(columns=2).classes("w-full gap-3"):
+                    unmatched_table = ui.table(
                         columns=[
+                            {"name": "type", "label": "Tipo", "field": "type", "sortable": True, "align": "left"},
                             {"name": "file", "label": "Archivo", "field": "file", "sortable": True, "align": "left"},
-                            {"name": "dat", "label": "DAT", "field": "dat", "sortable": True, "align": "left"},
-                            {"name": "ra", "label": "RA", "field": "ra", "sortable": True, "align": "center"},
                             {"name": "region", "label": "Región", "field": "region", "align": "center"},
-                            {"name": "tags", "label": "Tags", "field": "tags", "align": "right"},
+                            {"name": "md5", "label": "MD5", "field": "md5", "align": "left"},
+                            {"name": "suggestion", "label": "Sugerencia", "field": "suggestion", "align": "left"},
                         ],
                         rows=[],
-                        pagination=15,
+                        pagination=6,
                     ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-                    scan_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                    scan_table.add_slot("body-cell-region", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                    scan_table.add_slot("body-cell-tags", '<q-td :props="props" class="rp-right">{{ props.value }}</q-td>')
-                    ui.label("No coincidencias y duplicados").classes("text-md font-semibold")
-                    with ui.grid(columns=2).classes("w-full gap-3"):
-                        unmatched_table = ui.table(
-                            columns=[
-                                {"name": "type", "label": "Tipo", "field": "type", "sortable": True, "align": "left"},
-                                {"name": "file", "label": "Archivo", "field": "file", "sortable": True, "align": "left"},
-                                {"name": "region", "label": "Región", "field": "region", "align": "center"},
-                                {"name": "md5", "label": "MD5", "field": "md5", "align": "left"},
-                                {"name": "suggestion", "label": "Sugerencia", "field": "suggestion", "align": "left"},
-                            ],
-                            rows=[],
-                            pagination=6,
-                        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-                        duplicate_table = ui.table(
-                            columns=[
-                                {"name": "kind", "label": "Tipo", "field": "kind", "sortable": True, "align": "left"},
-                                {"name": "game", "label": "Juego", "field": "game", "sortable": True, "align": "left"},
-                                {"name": "count", "label": "N", "field": "count", "sortable": True, "align": "right"},
-                                {"name": "detail", "label": "Detalle", "field": "detail", "align": "left"},
-                            ],
-                            rows=[],
-                            pagination=6,
-                        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-                        unmatched_table.add_slot("body-cell-region", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-
-                    async def scan_click() -> None:
-                        refresh_active_config()
-                        if not source.value:
-                            scan_status.text = "Selecciona un origen antes de escanear."
-                            return
-                        try:
-                            state["scan_progress"] = {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "preparing"}
-                            dat_path = Path(dat.value) if dat.value else None
-                            if dat_path and dat_path.suffix.lower() == ".zip":
-                                imported = await asyncio.to_thread(import_dat_file, dat_path)
-                                dat_path = Path(imported[0].path)
-                                try:
-                                    state["suppress_setup_dirty"] = True
-                                    dat.value = str(dat_path)
-                                finally:
-                                    state["suppress_setup_dirty"] = False
-                            scan_status.text = "Cargando e indexando DAT..."
-                            catalog = await asyncio.to_thread(parse_dat, dat_path) if dat_path else None
-                            dat_index = await asyncio.to_thread(DatIndex, catalog) if catalog else None
-                            scan_status.text = "Escaneando ZIPs/ROMs... en romsets grandes puede tardar unos minutos."
-
-                            def progress_update(update: dict[str, object]) -> None:
-                                state["scan_progress"] = update
-
-                            result = await asyncio.to_thread(scan_directory, Path(source.value), _current_platform(), dat_index, dat_path, progress_update)
-                            result = await asyncio.to_thread(annotate_scan_with_ra, result)
-                            save_scan(result)
-                            state["scan"] = result
-                            state["catalog"] = catalog
-                            state["coverage"] = build_coverage(result, catalog)
-                            update_tab_access()
-                            scan_table.rows = [
-                                {
-                                    "file": Path(rom.container_path).name if not rom.inner_path else f"{Path(rom.container_path).name} / {rom.inner_path}",
-                                    "dat": rom.dat_game.name if rom.dat_game else "",
-                                    "ra": " ".join(part for part in [_ra_icon(rom), rom.ra_title or rom.ra_hash_name or ""] if part),
-                                    "region": _flag_regions(rom.metadata.regions),
-                                    "tags": ", ".join(rom.metadata.tags),
-                                }
-                                for rom in result.roms
-                            ]
-                            scan_table.update()
-                            unmatched_table.rows = _unmatched_rows(result)
-                            unmatched_table.update()
-                            duplicate_table.rows = _duplicate_rows(result)
-                            duplicate_table.update()
-                            ra_matches = sum(1 for rom in result.roms if rom.ra_game_id)
-                            scan_status.text = f"Escaneados {len(result.roms)} candidatos. Coincidencias RA: {ra_matches}. No reconocidos: {len(result.unmatched_files)}."
-                            _log_activity(f"Escaneo completado: {len(result.roms)} ROMs, {ra_matches} RA, {len(result.unmatched_files)} no reconocidos", "OK")
-                            refresh_needed_table()
-                            refresh_coverage()
-                            refresh_decisions()
-                        except Exception as exc:
-                            scan_status.text = f"Error de escaneo: {exc}"
-
-                    with ui.row():
-                        ui.button("Actualizar configuración", icon="refresh", on_click=refresh_active_config).props("outline")
-                        def diagnostic_click() -> None:
-                            refresh_active_config()
-                            diagnostic_table.rows = _diagnostic_rows(
-                                build_needed_rows(
-                                    _current_platform(),
-                                    Path(source.value) if source.value else None,
-                                    Path(dat.value) if dat.value else None,
-                                    state.get("scan"),  # type: ignore[arg-type]
-                                )
-                            )
-                            diagnostic_table.update()
-                            scan_status.text = "Diagnóstico actualizado. Si ves WARN/MISS, corrige eso antes de escanear."
-                            _log_activity("Diagnóstico rápido actualizado", "INFO")
-
-                        ui.button("Diagnóstico rápido", icon="troubleshoot", on_click=diagnostic_click).props("outline")
-                        ui.button("Escanear colección", icon="search", on_click=scan_click).props("color=primary")
-
-                    def refresh_scan_progress() -> None:
-                        progress = state.get("scan_progress", {})
-                        current = int(progress.get("current", 0) or 0)
-                        total = int(progress.get("total", 0) or 0)
-                        roms = int(progress.get("roms", 0) or 0)
-                        matched = int(progress.get("matched", 0) or 0)
-                        value = current / total if total else 0
-                        scan_progress.value = value
-                        percent = round(value * 100)
-                        scan_progress_label.text = f"{percent}% · {current} / {total} archivos · {roms} ROMs · {matched} matches"
-                        current_path = str(progress.get("path", "") or "")
-                        scan_current_file.text = f"Procesando: {Path(current_path).name}" if current_path else ""
-
-                    ui.timer(0.3, refresh_scan_progress)
-
-            with ui.tab_panel(summary_tab).classes("p-0"):
-                with ui.column().classes(_panel_class()):
-                    ui.label("Cobertura del romset").classes("text-lg font-semibold")
-                    coverage_status = ui.label("Escanea una colección con DAT para validar titulos contra el DAT. El plan decide despues que se conserva.").classes("text-sm text-gray-600")
-                    with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4 xl:grid-cols-8"):
-                        audit_score = ui.label("Score: 0").classes("border border-gray-200 rounded-md p-3 text-center font-semibold")
-                        audit_verdict = ui.label("Pendiente").classes("border border-gray-200 rounded-md p-3 text-center")
-                        audit_complete = ui.label("Completos: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        audit_missing = ui.label("Perdidos: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        audit_duplicates = ui.label("Duplicados: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        audit_ra = ui.label("RA: 0 / 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        audit_ra_missing = ui.label("Sin RA: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        audit_patches = ui.label("Parches: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                    audit_notes = ui.label("La auditoría se calcula tras escanear y mejora al crear el plan.").classes("text-sm text-gray-600")
-                    ui.label("Avisos de DAT / romset").classes("text-md font-semibold")
-                    dat_warning_table = ui.table(
+                    duplicate_table = ui.table(
                         columns=[
-                            {"name": "status", "label": "", "field": "status", "align": "center"},
-                            {"name": "item", "label": "Elemento", "field": "item", "sortable": True, "align": "left"},
+                            {"name": "kind", "label": "Tipo", "field": "kind", "sortable": True, "align": "left"},
+                            {"name": "game", "label": "Juego", "field": "game", "sortable": True, "align": "left"},
+                            {"name": "count", "label": "N", "field": "count", "sortable": True, "align": "right"},
                             {"name": "detail", "label": "Detalle", "field": "detail", "align": "left"},
-                            {"name": "recommendation", "label": "Recomendación", "field": "recommendation", "align": "left"},
                         ],
                         rows=[],
-                        pagination=5,
-                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
-                    dat_warning_table.add_slot(
-                        "body-cell-status",
-                        """
+                        pagination=6,
+                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+                    unmatched_table.add_slot("body-cell-region", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+
+                async def scan_click() -> None:
+                    refresh_active_config()
+                    if not source.value:
+                        scan_status.text = "Selecciona un origen antes de escanear."
+                        return
+                    try:
+                        state["scan_progress"] = {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "preparing"}
+                        dat_path = Path(dat.value) if dat.value else None
+                        if dat_path and dat_path.suffix.lower() == ".zip":
+                            imported = await asyncio.to_thread(import_dat_file, dat_path)
+                            dat_path = Path(imported[0].path)
+                            try:
+                                state["suppress_setup_dirty"] = True
+                                dat.value = str(dat_path)
+                            finally:
+                                state["suppress_setup_dirty"] = False
+                        scan_status.text = "Cargando e indexando DAT..."
+                        catalog = await asyncio.to_thread(parse_dat, dat_path) if dat_path else None
+                        dat_index = await asyncio.to_thread(DatIndex, catalog) if catalog else None
+                        scan_status.text = "Escaneando ZIPs/ROMs... en romsets grandes puede tardar unos minutos."
+
+                        def progress_update(update: dict[str, object]) -> None:
+                            state["scan_progress"] = update
+
+                        result = await asyncio.to_thread(scan_directory, Path(source.value), _current_platform(), dat_index, dat_path, progress_update)
+                        result = await asyncio.to_thread(annotate_scan_with_ra, result)
+                        save_scan(result)
+                        state["scan"] = result
+                        state["catalog"] = catalog
+                        state["coverage"] = build_coverage(result, catalog)
+                        update_tab_access()
+                        scan_table.rows = [
+                            {
+                                "file": Path(rom.container_path).name if not rom.inner_path else f"{Path(rom.container_path).name} / {rom.inner_path}",
+                                "dat": rom.dat_game.name if rom.dat_game else "",
+                                "ra": " ".join(part for part in [_ra_icon(rom), rom.ra_title or rom.ra_hash_name or ""] if part),
+                                "region": _flag_regions(rom.metadata.regions),
+                                "tags": ", ".join(rom.metadata.tags),
+                            }
+                            for rom in result.roms
+                        ]
+                        scan_table.update()
+                        unmatched_table.rows = _unmatched_rows(result)
+                        unmatched_table.update()
+                        duplicate_table.rows = _duplicate_rows(result)
+                        duplicate_table.update()
+                        ra_matches = sum(1 for rom in result.roms if rom.ra_game_id)
+                        scan_status.text = f"Escaneados {len(result.roms)} candidatos. Coincidencias RA: {ra_matches}. No reconocidos: {len(result.unmatched_files)}."
+                        _log_activity(f"Escaneo completado: {len(result.roms)} ROMs, {ra_matches} RA, {len(result.unmatched_files)} no reconocidos", "OK")
+                        refresh_needed_table()
+                        refresh_coverage()
+                        refresh_decisions()
+                    except Exception as exc:
+                        scan_status.text = f"Error de escaneo: {exc}"
+
+                with ui.row():
+                    ui.button("Actualizar configuración", icon="refresh", on_click=refresh_active_config).props("outline")
+                    def diagnostic_click() -> None:
+                        refresh_active_config()
+                        diagnostic_table.rows = _diagnostic_rows(
+                            build_needed_rows(
+                                _current_platform(),
+                                Path(source.value) if source.value else None,
+                                Path(dat.value) if dat.value else None,
+                                state.get("scan"),  # type: ignore[arg-type]
+                            )
+                        )
+                        diagnostic_table.update()
+                        scan_status.text = "Diagnóstico actualizado. Si ves WARN/MISS, corrige eso antes de escanear."
+                        _log_activity("Diagnóstico rápido actualizado", "INFO")
+
+                    ui.button("Diagnóstico rápido", icon="troubleshoot", on_click=diagnostic_click).props("outline")
+                    ui.button("Escanear colección", icon="search", on_click=scan_click).props("color=primary")
+
+                def refresh_scan_progress() -> None:
+                    progress = state.get("scan_progress", {})
+                    current = int(progress.get("current", 0) or 0)
+                    total = int(progress.get("total", 0) or 0)
+                    roms = int(progress.get("roms", 0) or 0)
+                    matched = int(progress.get("matched", 0) or 0)
+                    value = current / total if total else 0
+                    scan_progress.value = value
+                    percent = round(value * 100)
+                    scan_progress_label.text = f"{percent}% · {current} / {total} archivos · {roms} ROMs · {matched} matches"
+                    current_path = str(progress.get("path", "") or "")
+                    scan_current_file.text = f"Procesando: {Path(current_path).name}" if current_path else ""
+
+                ui.timer(0.3, refresh_scan_progress)
+
+            with ui.tab_panel(summary_tab).classes("p-0"), ui.column().classes(_panel_class()):
+                ui.label("Cobertura del romset").classes("text-lg font-semibold")
+                coverage_status = ui.label("Escanea una colección con DAT para validar titulos contra el DAT. El plan decide despues que se conserva.").classes("text-sm text-gray-600")
+                with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4 xl:grid-cols-8"):
+                    audit_score = ui.label("Score: 0").classes("border border-gray-200 rounded-md p-3 text-center font-semibold")
+                    audit_verdict = ui.label("Pendiente").classes("border border-gray-200 rounded-md p-3 text-center")
+                    audit_complete = ui.label("Completos: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    audit_missing = ui.label("Perdidos: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    audit_duplicates = ui.label("Duplicados: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    audit_ra = ui.label("RA: 0 / 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    audit_ra_missing = ui.label("Sin RA: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    audit_patches = ui.label("Parches: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                audit_notes = ui.label("La auditoría se calcula tras escanear y mejora al crear el plan.").classes("text-sm text-gray-600")
+                ui.label("Avisos de DAT / romset").classes("text-md font-semibold")
+                dat_warning_table = ui.table(
+                    columns=[
+                        {"name": "status", "label": "", "field": "status", "align": "center"},
+                        {"name": "item", "label": "Elemento", "field": "item", "sortable": True, "align": "left"},
+                        {"name": "detail", "label": "Detalle", "field": "detail", "align": "left"},
+                        {"name": "recommendation", "label": "Recomendación", "field": "recommendation", "align": "left"},
+                    ],
+                    rows=[],
+                    pagination=5,
+                ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+                dat_warning_table.add_slot(
+                    "body-cell-status",
+                    """
                         <q-td :props="props" class="rp-center">
                           <q-badge v-if="props.value === 'OK'" color="green" label="OK" />
                           <q-badge v-else-if="props.value === 'WARN'" color="amber" text-color="black" label="WARN" />
@@ -2304,84 +2301,84 @@ def build_ui() -> None:
                           <q-badge v-else color="blue-grey" label="INFO" />
                         </q-td>
                         """,
-                    )
-                    ui.label("Cola de parches RA").classes("text-md font-semibold")
-                    patch_queue_table = ui.table(
-                        columns=[
-                            {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
-                            {"name": "game", "label": "Juego/hash RA", "field": "game", "align": "left"},
-                            {"name": "source", "label": "Base", "field": "source", "align": "left"},
-                            {"name": "patch", "label": "PatchUrl", "field": "patch", "align": "left"},
-                            {"name": "expected", "label": "MD5 final", "field": "expected", "align": "left"},
-                            {"name": "destination", "label": "Destino", "field": "destination", "align": "left"},
-                        ],
-                        rows=[],
-                        pagination=5,
-                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
-                    with ui.row().classes("items-center gap-2 text-sm"):
-                        ui.badge("OK", color="green")
-                        ui.label("Coincide con DAT / se guardara")
-                        ui.badge("DROP", color="amber").props("text-color=black")
-                        ui.label("Coincide, pero el perfil lo descarta")
-                        ui.badge("MISS", color="red")
-                        ui.label("Falta en DAT o romset")
-                    with ui.row().classes("items-center gap-2 text-sm"):
-                        ui.label("Reglas:")
-                        ui.label("🎯 override")
-                        ui.label("🏆 RA/sin RA")
-                        ui.label("🏷️ tag")
-                        ui.label("🌍 región")
-                        ui.label("💬 idioma")
-                        ui.label("🔢 revisión")
-                        ui.label("✅ DAT")
-                    with ui.row().classes("items-center gap-2"):
-                        ui.button("Crear/actualizar plan", icon="rule", on_click=run_summary_plan_click).props("color=primary")
-                        ui.button("Aplicar plan revisado", icon="play_arrow", on_click=run_summary_apply_click).props("color=secondary outline")
-                    with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4 xl:grid-cols-8"):
-                        metric_dat = ui.label("DAT: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        metric_rom = ui.label("Romset: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        metric_match = ui.label("Coinciden: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        metric_missing = ui.label("Faltan: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        metric_unmatched = ui.label("Fuera DAT: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        metric_hash = ui.label("Hash distinto: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        metric_keep = ui.label("Se guardan: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                        metric_drop = ui.label("Se pierden: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-                    coverage_filter = ui.select(
-                        {
-                            "all": "Todos los juegos",
-                            "complete_any_region": "Tengo el juego, cualquier región",
-                            "matched": "Coinciden con DAT",
-                            "missing": "Están en DAT y faltan",
-                            "unmatched": "Están en romset pero fuera del DAT",
-                            "hash_mismatch": "Están en DAT pero el hash no coincide",
-                            "will_drop": "Se perderán con el perfil actual",
-                        },
-                        value="all",
-                        label="Filtro",
-                    ).props("outlined").classes("w-96")
-                    coverage_view = ui.select(
-                        {"grouped": "Agrupado por juego", "variants": "Separado por variante/archivo"},
-                        value="grouped",
-                        label="Vista",
-                    ).props("outlined").classes("w-80")
-                    coverage_table = ui.table(
-                        columns=[
-                            {"name": "visual", "label": "", "field": "visual", "align": "center"},
-                            {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
-                            {"name": "ra", "label": "RA", "field": "ra", "sortable": True, "align": "center"},
-                            {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
-                            {"name": "variants", "label": "Variantes", "field": "variants", "sortable": True, "align": "left"},
-                            {"name": "dat_regions", "label": "DAT", "field": "dat_regions", "align": "center"},
-                            {"name": "rom_regions", "label": "Romset", "field": "rom_regions", "align": "center"},
-                            {"name": "keep", "label": "Salida", "field": "keep", "align": "center"},
-                            {"name": "reason", "label": "Regla", "field": "reason", "align": "center"},
-                        ],
-                        rows=[],
-                        pagination=20,
-                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-                    coverage_table.add_slot(
-                        "body-cell-visual",
-                        """
+                )
+                ui.label("Cola de parches RA").classes("text-md font-semibold")
+                patch_queue_table = ui.table(
+                    columns=[
+                        {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
+                        {"name": "game", "label": "Juego/hash RA", "field": "game", "align": "left"},
+                        {"name": "source", "label": "Base", "field": "source", "align": "left"},
+                        {"name": "patch", "label": "PatchUrl", "field": "patch", "align": "left"},
+                        {"name": "expected", "label": "MD5 final", "field": "expected", "align": "left"},
+                        {"name": "destination", "label": "Destino", "field": "destination", "align": "left"},
+                    ],
+                    rows=[],
+                    pagination=5,
+                ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+                with ui.row().classes("items-center gap-2 text-sm"):
+                    ui.badge("OK", color="green")
+                    ui.label("Coincide con DAT / se guardara")
+                    ui.badge("DROP", color="amber").props("text-color=black")
+                    ui.label("Coincide, pero el perfil lo descarta")
+                    ui.badge("MISS", color="red")
+                    ui.label("Falta en DAT o romset")
+                with ui.row().classes("items-center gap-2 text-sm"):
+                    ui.label("Reglas:")
+                    ui.label("🎯 override")
+                    ui.label("🏆 RA/sin RA")
+                    ui.label("🏷️ tag")
+                    ui.label("🌍 región")
+                    ui.label("💬 idioma")
+                    ui.label("🔢 revisión")
+                    ui.label("✅ DAT")
+                with ui.row().classes("items-center gap-2"):
+                    ui.button("Crear/actualizar plan", icon="rule", on_click=run_summary_plan_click).props("color=primary")
+                    ui.button("Aplicar plan revisado", icon="play_arrow", on_click=run_summary_apply_click).props("color=secondary outline")
+                with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4 xl:grid-cols-8"):
+                    metric_dat = ui.label("DAT: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    metric_rom = ui.label("Romset: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    metric_match = ui.label("Coinciden: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    metric_missing = ui.label("Faltan: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    metric_unmatched = ui.label("Fuera DAT: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    metric_hash = ui.label("Hash distinto: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    metric_keep = ui.label("Se guardan: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                    metric_drop = ui.label("Se pierden: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+                coverage_filter = ui.select(
+                    {
+                        "all": "Todos los juegos",
+                        "complete_any_region": "Tengo el juego, cualquier región",
+                        "matched": "Coinciden con DAT",
+                        "missing": "Están en DAT y faltan",
+                        "unmatched": "Están en romset pero fuera del DAT",
+                        "hash_mismatch": "Están en DAT pero el hash no coincide",
+                        "will_drop": "Se perderán con el perfil actual",
+                    },
+                    value="all",
+                    label="Filtro",
+                ).props("outlined").classes("w-96")
+                coverage_view = ui.select(
+                    {"grouped": "Agrupado por juego", "variants": "Separado por variante/archivo"},
+                    value="grouped",
+                    label="Vista",
+                ).props("outlined").classes("w-80")
+                coverage_table = ui.table(
+                    columns=[
+                        {"name": "visual", "label": "", "field": "visual", "align": "center"},
+                        {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
+                        {"name": "ra", "label": "RA", "field": "ra", "sortable": True, "align": "center"},
+                        {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
+                        {"name": "variants", "label": "Variantes", "field": "variants", "sortable": True, "align": "left"},
+                        {"name": "dat_regions", "label": "DAT", "field": "dat_regions", "align": "center"},
+                        {"name": "rom_regions", "label": "Romset", "field": "rom_regions", "align": "center"},
+                        {"name": "keep", "label": "Salida", "field": "keep", "align": "center"},
+                        {"name": "reason", "label": "Regla", "field": "reason", "align": "center"},
+                    ],
+                    rows=[],
+                    pagination=20,
+                ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+                coverage_table.add_slot(
+                    "body-cell-visual",
+                    """
                         <q-td :props="props" class="rp-center">
                           <q-badge v-if="props.value === 'green'" color="green" label="OK" />
                           <q-badge v-else-if="props.value === 'yellow'" color="amber" text-color="black" label="DROP" />
@@ -2389,15 +2386,15 @@ def build_ui() -> None:
                           <q-badge v-else color="grey" label="WAIT" />
                         </q-td>
                         """,
-                    )
-                    coverage_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                    coverage_table.add_slot("body-cell-dat_regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                    coverage_table.add_slot("body-cell-rom_regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                    coverage_table.add_slot("body-cell-keep", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                    coverage_table.add_slot("body-cell-reason", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                    coverage_table.add_slot(
-                        "body-cell-title",
-                        """
+                )
+                coverage_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                coverage_table.add_slot("body-cell-dat_regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                coverage_table.add_slot("body-cell-rom_regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                coverage_table.add_slot("body-cell-keep", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                coverage_table.add_slot("body-cell-reason", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                coverage_table.add_slot(
+                    "body-cell-title",
+                    """
                         <q-td :props="props">
                           <strong :class="{
                             'text-green-700': props.row.visual === 'green',
@@ -2407,10 +2404,10 @@ def build_ui() -> None:
                           }">{{ props.value }}</strong>
                         </q-td>
                         """,
-                    )
-                    coverage_table.add_slot(
-                        "body-cell-status",
-                        """
+                )
+                coverage_table.add_slot(
+                    "body-cell-status",
+                    """
                         <q-td :props="props">
                           <span :class="{
                             'text-green-700': props.row.visual === 'green',
@@ -2420,164 +2417,163 @@ def build_ui() -> None:
                           }">{{ props.value }}</span>
                         </q-td>
                         """,
-                    )
+                )
 
-                    def refresh_coverage() -> None:
-                        summary = state.get("coverage")
-                        if summary is None:
-                            coverage_table.rows = []
-                            coverage_table.update()
-                            audit = build_perfect_audit(None, None, None)
-                            audit_score.text = f"Score: {audit.score}"
-                            audit_verdict.text = audit.verdict
-                            audit_notes.text = " · ".join(audit.notes)
-                            dat_warning_table.rows = _diagnostic_rows(
-                                build_needed_rows(
-                                    _current_platform(),
-                                    Path(source.value) if source.value else None,
-                                    Path(dat.value) if dat.value else None,
-                                    None,
-                                )
-                            )
-                            dat_warning_table.update()
-                            patch_queue_table.rows = []
-                            patch_queue_table.update()
-                            return
-                        audit = build_perfect_audit(summary, state.get("scan"), state.get("manifest"))  # type: ignore[arg-type]
+                def refresh_coverage() -> None:
+                    summary = state.get("coverage")
+                    if summary is None:
+                        coverage_table.rows = []
+                        coverage_table.update()
+                        audit = build_perfect_audit(None, None, None)
                         audit_score.text = f"Score: {audit.score}"
                         audit_verdict.text = audit.verdict
-                        audit_complete.text = f"Completos: {audit.complete_games}"
-                        audit_missing.text = f"Perdidos: {audit.missing_games}"
-                        audit_duplicates.text = f"Duplicados: {audit.duplicate_groups}"
-                        audit_ra.text = f"RA: {audit.ra_covered_games} / {summary.romset_games}"
-                        audit_ra_missing.text = f"Sin RA: {audit.ra_missing_games}"
-                        audit_patches.text = f"Parches: {audit.patch_pending}"
                         audit_notes.text = " · ".join(audit.notes)
                         dat_warning_table.rows = _diagnostic_rows(
-                            detect_dat_warnings(
+                            build_needed_rows(
                                 _current_platform(),
                                 Path(source.value) if source.value else None,
                                 Path(dat.value) if dat.value else None,
-                                state.get("scan"),  # type: ignore[arg-type]
+                                None,
                             )
                         )
                         dat_warning_table.update()
-                        patch_queue_table.rows = _patch_queue_rows(state.get("manifest"))
+                        patch_queue_table.rows = []
                         patch_queue_table.update()
-                        metric_dat.text = f"DAT: {summary.dat_games}"
-                        metric_rom.text = f"Romset: {summary.romset_games}"
-                        metric_match.text = f"Coinciden: {summary.matched_games}"
-                        metric_missing.text = f"Faltan: {summary.missing_from_romset}"
-                        metric_unmatched.text = f"Fuera DAT: {summary.unmatched_romset_games}"
-                        metric_hash.text = f"Hash distinto: {summary.hash_mismatch_games}"
-                        metric_keep.text = f"Se guardan: {summary.will_keep_games}"
-                        metric_drop.text = f"Se pierden: {summary.will_drop_all_games}"
-                        coverage_status.text = "Los titulos se validan al terminar el escaneo. Al crear el plan, los colores reflejan que se conserva o descarta."
-                        if coverage_view.value == "variants":
-                            coverage_table.rows = _coverage_variant_rows(state.get("scan"), state.get("catalog"), state.get("manifest"), coverage_filter.value)
-                        else:
-                            coverage_table.rows = _coverage_rows(summary, coverage_filter.value, state.get("scan"), state.get("manifest"))
-                        coverage_table.update()
+                        return
+                    audit = build_perfect_audit(summary, state.get("scan"), state.get("manifest"))  # type: ignore[arg-type]
+                    audit_score.text = f"Score: {audit.score}"
+                    audit_verdict.text = audit.verdict
+                    audit_complete.text = f"Completos: {audit.complete_games}"
+                    audit_missing.text = f"Perdidos: {audit.missing_games}"
+                    audit_duplicates.text = f"Duplicados: {audit.duplicate_groups}"
+                    audit_ra.text = f"RA: {audit.ra_covered_games} / {summary.romset_games}"
+                    audit_ra_missing.text = f"Sin RA: {audit.ra_missing_games}"
+                    audit_patches.text = f"Parches: {audit.patch_pending}"
+                    audit_notes.text = " · ".join(audit.notes)
+                    dat_warning_table.rows = _diagnostic_rows(
+                        detect_dat_warnings(
+                            _current_platform(),
+                            Path(source.value) if source.value else None,
+                            Path(dat.value) if dat.value else None,
+                            state.get("scan"),  # type: ignore[arg-type]
+                        )
+                    )
+                    dat_warning_table.update()
+                    patch_queue_table.rows = _patch_queue_rows(state.get("manifest"))
+                    patch_queue_table.update()
+                    metric_dat.text = f"DAT: {summary.dat_games}"
+                    metric_rom.text = f"Romset: {summary.romset_games}"
+                    metric_match.text = f"Coinciden: {summary.matched_games}"
+                    metric_missing.text = f"Faltan: {summary.missing_from_romset}"
+                    metric_unmatched.text = f"Fuera DAT: {summary.unmatched_romset_games}"
+                    metric_hash.text = f"Hash distinto: {summary.hash_mismatch_games}"
+                    metric_keep.text = f"Se guardan: {summary.will_keep_games}"
+                    metric_drop.text = f"Se pierden: {summary.will_drop_all_games}"
+                    coverage_status.text = "Los titulos se validan al terminar el escaneo. Al crear el plan, los colores reflejan que se conserva o descarta."
+                    if coverage_view.value == "variants":
+                        coverage_table.rows = _coverage_variant_rows(state.get("scan"), state.get("catalog"), state.get("manifest"), coverage_filter.value)
+                    else:
+                        coverage_table.rows = _coverage_rows(summary, coverage_filter.value, state.get("scan"), state.get("manifest"))
+                    coverage_table.update()
 
-                    coverage_filter.on_value_change(lambda _: refresh_coverage())
-                    coverage_view.on_value_change(lambda _: refresh_coverage())
+                coverage_filter.on_value_change(lambda _: refresh_coverage())
+                coverage_view.on_value_change(lambda _: refresh_coverage())
 
-            with ui.tab_panel(decisions_tab).classes("p-0"):
-                with ui.column().classes(_panel_class()):
-                    ui.label("Decisiones por juego").classes("text-lg font-semibold")
-                    decision_status = ui.label("Escanea una colección para revisar variantes.").classes("text-sm text-gray-600")
-                    with ui.row().classes("items-center gap-2 text-sm"):
-                        ui.label("Leyenda:")
-                        ui.label("✅ DAT")
-                        ui.label("❌ sin DAT")
-                        ui.label("🏆 RA")
-                        ui.label("🎯 override")
-                        ui.label("🌍 región")
-                        ui.label("💬 idioma")
-                        ui.label("🔢 revisión")
-                    selected_group = {"key": ""}
-                    with ui.grid(columns=2).classes("w-full gap-4"):
-                        groups_table = ui.table(
-                            columns=[
-                                {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
-                                {"name": "variants", "label": "Variantes", "field": "variants", "sortable": True, "align": "right"},
-                                {"name": "regions", "label": "Regiones", "field": "regions", "align": "center"},
-                                {"name": "ra", "label": "RA", "field": "ra", "sortable": True, "align": "center"},
-                                {"name": "main_override", "label": "Main fijo", "field": "main_override", "align": "left"},
-                                {"name": "ra_override", "label": "RA fijo", "field": "ra_override", "align": "left"},
-                            ],
-                            rows=[],
-                            row_key="group",
-                            pagination=12,
-                        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-                        variants_table = ui.table(
-                            columns=[
-                                {"name": "choice", "label": "Fijado", "field": "choice", "align": "center"},
-                                {"name": "dat", "label": "DAT", "field": "dat", "align": "center"},
-                                {"name": "file", "label": "Archivo", "field": "file", "sortable": True, "align": "left"},
-                                {"name": "regions", "label": "Región", "field": "regions", "align": "center"},
-                                {"name": "revision", "label": "Rev", "field": "revision", "align": "center"},
-                                {"name": "ra", "label": "RA", "field": "ra", "align": "center"},
-                                {"name": "tags", "label": "Tags", "field": "tags", "align": "right"},
-                                {"name": "priority", "label": "Prioridad", "field": "priority", "align": "center"},
-                            ],
-                            rows=[],
-                            row_key="id",
-                            selection="single",
-                            pagination=8,
-                        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-                        groups_table.add_slot("body-cell-regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                        groups_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                        variants_table.add_slot("body-cell-choice", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                        variants_table.add_slot("body-cell-dat", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                        variants_table.add_slot("body-cell-regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                        variants_table.add_slot("body-cell-revision", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                        variants_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-                        variants_table.add_slot("body-cell-tags", '<q-td :props="props" class="rp-right">{{ props.value }}</q-td>')
-                        variants_table.add_slot("body-cell-priority", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+            with ui.tab_panel(decisions_tab).classes("p-0"), ui.column().classes(_panel_class()):
+                ui.label("Decisiones por juego").classes("text-lg font-semibold")
+                decision_status = ui.label("Escanea una colección para revisar variantes.").classes("text-sm text-gray-600")
+                with ui.row().classes("items-center gap-2 text-sm"):
+                    ui.label("Leyenda:")
+                    ui.label("✅ DAT")
+                    ui.label("❌ sin DAT")
+                    ui.label("🏆 RA")
+                    ui.label("🎯 override")
+                    ui.label("🌍 región")
+                    ui.label("💬 idioma")
+                    ui.label("🔢 revisión")
+                selected_group = {"key": ""}
+                with ui.grid(columns=2).classes("w-full gap-4"):
+                    groups_table = ui.table(
+                        columns=[
+                            {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
+                            {"name": "variants", "label": "Variantes", "field": "variants", "sortable": True, "align": "right"},
+                            {"name": "regions", "label": "Regiones", "field": "regions", "align": "center"},
+                            {"name": "ra", "label": "RA", "field": "ra", "sortable": True, "align": "center"},
+                            {"name": "main_override", "label": "Main fijo", "field": "main_override", "align": "left"},
+                            {"name": "ra_override", "label": "RA fijo", "field": "ra_override", "align": "left"},
+                        ],
+                        rows=[],
+                        row_key="group",
+                        pagination=12,
+                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+                    variants_table = ui.table(
+                        columns=[
+                            {"name": "choice", "label": "Fijado", "field": "choice", "align": "center"},
+                            {"name": "dat", "label": "DAT", "field": "dat", "align": "center"},
+                            {"name": "file", "label": "Archivo", "field": "file", "sortable": True, "align": "left"},
+                            {"name": "regions", "label": "Región", "field": "regions", "align": "center"},
+                            {"name": "revision", "label": "Rev", "field": "revision", "align": "center"},
+                            {"name": "ra", "label": "RA", "field": "ra", "align": "center"},
+                            {"name": "tags", "label": "Tags", "field": "tags", "align": "right"},
+                            {"name": "priority", "label": "Prioridad", "field": "priority", "align": "center"},
+                        ],
+                        rows=[],
+                        row_key="id",
+                        selection="single",
+                        pagination=8,
+                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+                    groups_table.add_slot("body-cell-regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                    groups_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                    variants_table.add_slot("body-cell-choice", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                    variants_table.add_slot("body-cell-dat", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                    variants_table.add_slot("body-cell-regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                    variants_table.add_slot("body-cell-revision", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                    variants_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+                    variants_table.add_slot("body-cell-tags", '<q-td :props="props" class="rp-right">{{ props.value }}</q-td>')
+                    variants_table.add_slot("body-cell-priority", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
 
-                    def refresh_decisions() -> None:
-                        groups_table.rows = _group_rows(state.get("scan"))
-                        groups_table.update()
-                        if selected_group["key"]:
-                            variants_table.rows = _variant_rows(state.get("scan"), selected_group["key"], state["profile"])  # type: ignore[arg-type]
-                            variants_table.update()
-
-                    def select_group(event) -> None:
-                        row = event.args[1] if isinstance(event.args, list) and len(event.args) > 1 else event.args
-                        selected_group["key"] = row.get("group", "") if isinstance(row, dict) else ""
+                def refresh_decisions() -> None:
+                    groups_table.rows = _group_rows(state.get("scan"))
+                    groups_table.update()
+                    if selected_group["key"]:
                         variants_table.rows = _variant_rows(state.get("scan"), selected_group["key"], state["profile"])  # type: ignore[arg-type]
                         variants_table.update()
-                        decision_status.text = f"Revisando: {row.get('title', selected_group['key']) if isinstance(row, dict) else selected_group['key']}"
 
-                    groups_table.on("rowClick", select_group)
+                def select_group(event) -> None:
+                    row = event.args[1] if isinstance(event.args, list) and len(event.args) > 1 else event.args
+                    selected_group["key"] = row.get("group", "") if isinstance(row, dict) else ""
+                    variants_table.rows = _variant_rows(state.get("scan"), selected_group["key"], state["profile"])  # type: ignore[arg-type]
+                    variants_table.update()
+                    decision_status.text = f"Revisando: {row.get('title', selected_group['key']) if isinstance(row, dict) else selected_group['key']}"
 
-                    def selected_variant_id() -> str | None:
-                        selected = variants_table.selected
-                        if not selected:
-                            return None
-                        return selected[0].get("id")
+                groups_table.on("rowClick", select_group)
 
-                    def set_override(bucket: str) -> None:
-                        rom_id = selected_variant_id()
-                        if not selected_group["key"] or not rom_id:
-                            decision_status.text = "Selecciona un juego y una variante."
-                            return
-                        state["overrides"].setdefault(bucket, {})[selected_group["key"]] = rom_id  # type: ignore[union-attr]
-                        decision_status.text = f"Override {bucket} aplicado."
-                        refresh_decisions()
+                def selected_variant_id() -> str | None:
+                    selected = variants_table.selected
+                    if not selected:
+                        return None
+                    return selected[0].get("id")
 
-                    def clear_override(bucket: str) -> None:
-                        if selected_group["key"]:
-                            state["overrides"].setdefault(bucket, {}).pop(selected_group["key"], None)  # type: ignore[union-attr]
-                        decision_status.text = f"Override {bucket} eliminado."
-                        refresh_decisions()
+                def set_override(bucket: str) -> None:
+                    rom_id = selected_variant_id()
+                    if not selected_group["key"] or not rom_id:
+                        decision_status.text = "Selecciona un juego y una variante."
+                        return
+                    state["overrides"].setdefault(bucket, {})[selected_group["key"]] = rom_id  # type: ignore[union-attr]
+                    decision_status.text = f"Override {bucket} aplicado."
+                    refresh_decisions()
 
-                    with ui.row():
-                        ui.button("Usar variante en main", icon="bookmark", on_click=lambda: set_override("main")).props("color=primary")
-                        ui.button("Usar variante en RA", icon="emoji_events", on_click=lambda: set_override("ra")).props("outline")
-                        ui.button("Quitar override main", icon="backspace", on_click=lambda: clear_override("main")).props("flat")
-                        ui.button("Quitar override RA", icon="backspace", on_click=lambda: clear_override("ra")).props("flat")
+                def clear_override(bucket: str) -> None:
+                    if selected_group["key"]:
+                        state["overrides"].setdefault(bucket, {}).pop(selected_group["key"], None)  # type: ignore[union-attr]
+                    decision_status.text = f"Override {bucket} eliminado."
+                    refresh_decisions()
+
+                with ui.row():
+                    ui.button("Usar variante en main", icon="bookmark", on_click=lambda: set_override("main")).props("color=primary")
+                    ui.button("Usar variante en RA", icon="emoji_events", on_click=lambda: set_override("ra")).props("outline")
+                    ui.button("Quitar override main", icon="backspace", on_click=lambda: clear_override("main")).props("flat")
+                    ui.button("Quitar override RA", icon="backspace", on_click=lambda: clear_override("ra")).props("flat")
 
             with ui.tab_panel(plan_tab).classes("p-0"):
                 with ui.column().classes(_panel_class()):
@@ -2801,29 +2797,28 @@ def build_ui() -> None:
                         ui.button("Abrir reportes", icon="topic", on_click=lambda: _open_path(Path(".retroperfect/reports"))).props("outline")
                         ui.button("Aplicar", icon="play_arrow", on_click=apply_click).props("color=secondary")
 
-            with ui.tab_panel(activity_tab).classes("p-0"):
-                with ui.column().classes(_panel_class()):
-                    ui.label("Actividad").classes("text-lg font-semibold")
-                    ui.label("Registro local de acciones importantes de esta sesión: diagnósticos, escaneos, descargas DAT, planes y RA.").classes("text-sm text-gray-600")
-                    activity_table = ui.table(
-                        columns=[
-                            {"name": "time", "label": "Hora", "field": "time", "sortable": True, "align": "center"},
-                            {"name": "level", "label": "Tipo", "field": "level", "sortable": True, "align": "center"},
-                            {"name": "message", "label": "Mensaje", "field": "message", "align": "left"},
-                        ],
-                        rows=_activity_rows(),
-                        pagination=12,
-                    ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+            with ui.tab_panel(activity_tab).classes("p-0"), ui.column().classes(_panel_class()):
+                ui.label("Actividad").classes("text-lg font-semibold")
+                ui.label("Registro local de acciones importantes de esta sesión: diagnósticos, escaneos, descargas DAT, planes y RA.").classes("text-sm text-gray-600")
+                activity_table = ui.table(
+                    columns=[
+                        {"name": "time", "label": "Hora", "field": "time", "sortable": True, "align": "center"},
+                        {"name": "level", "label": "Tipo", "field": "level", "sortable": True, "align": "center"},
+                        {"name": "message", "label": "Mensaje", "field": "message", "align": "left"},
+                    ],
+                    rows=_activity_rows(),
+                    pagination=12,
+                ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
 
-                    def refresh_activity() -> None:
-                        activity_table.rows = _activity_rows()
-                        activity_table.update()
+                def refresh_activity() -> None:
+                    activity_table.rows = _activity_rows()
+                    activity_table.update()
 
-                    with ui.row():
-                        ui.button("Refrescar", icon="refresh", on_click=refresh_activity).props("outline")
-                        ui.button("Abrir carpeta del proyecto", icon="folder_open", on_click=lambda: _open_path(project_state_dir())).props("outline")
+                with ui.row():
+                    ui.button("Refrescar", icon="refresh", on_click=refresh_activity).props("outline")
+                    ui.button("Abrir carpeta del proyecto", icon="folder_open", on_click=lambda: _open_path(project_state_dir())).props("outline")
 
-                    ui.timer(1.0, refresh_activity)
+                ui.timer(1.0, refresh_activity)
 
 
 def run(host: str = "127.0.0.1", port: int = 8080) -> None:

@@ -6,7 +6,6 @@ import hashlib
 from .models import Platform, RomHash
 from .platforms import platform_spec
 
-
 INES_HEADER_SIZE = 16
 SNES_COPIER_HEADER_SIZE = 512
 HASH_CHUNK_SIZE = 1024 * 1024

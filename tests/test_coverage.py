@@ -1,5 +1,5 @@
 from retroperfect.coverage import build_coverage
-from retroperfect.models import DatCatalog, DatGame, DatRom, Platform, RomHash, ScanResult, ScannedRom, DetectedMetadata
+from retroperfect.models import DatCatalog, DatGame, DatRom, DetectedMetadata, Platform, RomHash, ScannedRom, ScanResult
 
 
 def test_coverage_counts_games_independent_of_region() -> None:

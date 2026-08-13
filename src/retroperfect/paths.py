@@ -4,7 +4,6 @@ from pathlib import Path
 
 from platformdirs import user_config_dir, user_data_dir
 
-
 APP_NAME = "RetroPerfect"
 
 

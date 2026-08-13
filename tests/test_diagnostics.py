@@ -6,7 +6,7 @@ from pathlib import Path
 
 from retroperfect.coverage import build_coverage
 from retroperfect.dat import DatIndex, parse_logiqx_dat
-from retroperfect.diagnostics import build_perfect_audit, build_patch_queue, detect_dat_warnings
+from retroperfect.diagnostics import build_patch_queue, build_perfect_audit, detect_dat_warnings
 from retroperfect.models import ActionMode, Manifest, ManifestEntry, OutputBucket, Platform
 from retroperfect.profile import list_recommended_profiles
 from retroperfect.scanner import scan_directory
