@@ -12,7 +12,8 @@ import py7zr
 from py7zr.io import BytesIOFactory
 
 from .dat import DatIndex
-from .hashing import arcade_ra_md5, hash_bytes, hash_stream
+from .disc import disc_ra_md5
+from .hashing import HEADER_HASH_MODES, arcade_ra_md5, hash_bytes, hash_stream
 from .metadata import parse_no_intro_name
 from .models import Platform, RomHash, ScannedRom, ScanResult
 from .platforms import platform_spec
@@ -23,14 +24,14 @@ ProgressCallback = Callable[[dict[str, object]], None]
 # Contenedores admitidos para cualquier plataforma, aunque el spec no los liste.
 CONTAINER_SUFFIXES = {".zip", ".7z"}
 
-# Above this size, hash_mode 'direct' files (discs, CHDs...) are hashed in
-# streaming instead of loading the whole file in memory. Header-aware modes
-# (nes/snes/n64) always need the full data, but those files are small.
+# Por encima de este tamaño, los archivos sin modo de cabecera (discos, CHDs...)
+# se hashean en streaming en vez de cargarse enteros en memoria. Los modos con
+# cabecera (nes/snes/n64/nds...) necesitan los datos completos, pero son pequeños.
 STREAM_THRESHOLD_BYTES = 64 * 1024 * 1024
 
 
 def _should_stream(platform: Platform, size: int) -> bool:
-    return platform_spec(platform).hash_mode == "direct" and size >= STREAM_THRESHOLD_BYTES
+    return platform_spec(platform).hash_mode not in HEADER_HASH_MODES and size >= STREAM_THRESHOLD_BYTES
 
 
 def _read_7z_entries(archive: py7zr.SevenZipFile, targets: list[str], largest: int) -> dict:
@@ -122,19 +123,24 @@ def _scan_arcade_container(
 
 def _scan_loose_file(path: Path, platform: Platform, dat_index: DatIndex | None, cache: ScanHashCache | None) -> ScannedRom:
     stat = path.stat()
+    hash_mode = platform_spec(platform).hash_mode
     cached = cache.get(str(path), None, platform, stat.st_size, stat.st_mtime_ns) if cache else None
     if cached is not None:
+        if cached.ra_md5 is None:
+            cached.ra_md5 = disc_ra_md5(path, hash_mode)
         return _scan_payload(hashes=cached, data_loader=path.read_bytes, source_path=path, container_path=path, inner_path=None, platform=platform, dat_index=dat_index)
     if _should_stream(platform, stat.st_size):
         with path.open("rb") as fh:
             hashes = hash_stream(fh)
-        if cache:
-            cache.put(str(path), None, platform, stat.st_size, stat.st_mtime_ns, hashes)
-        return _scan_payload(hashes=hashes, source_path=path, container_path=path, inner_path=None, platform=platform, dat_index=dat_index)
-    data = path.read_bytes()
-    hashes = hash_bytes(data, platform)
+    else:
+        data = path.read_bytes()
+        hashes = hash_bytes(data, platform)
+    if hashes.ra_md5 is None:
+        hashes.ra_md5 = disc_ra_md5(path, hash_mode)
     if cache:
         cache.put(str(path), None, platform, stat.st_size, stat.st_mtime_ns, hashes)
+    if _should_stream(platform, stat.st_size):
+        return _scan_payload(hashes=hashes, source_path=path, container_path=path, inner_path=None, platform=platform, dat_index=dat_index)
     return _scan_payload(data=data, hashes=hashes, source_path=path, container_path=path, inner_path=None, platform=platform, dat_index=dat_index)
 
 

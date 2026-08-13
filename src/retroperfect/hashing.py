@@ -14,6 +14,11 @@ A78_HEADER_SIZE = 128
 PCE_HEADER_SIZE = 512
 HASH_CHUNK_SIZE = 1024 * 1024
 
+# Modos que necesitan el archivo completo en memoria para derivar el payload/hash RA.
+# El resto (incluidos los modos de disco psx/segacd/psp) hashea en streaming: su hash
+# RA se calcula aparte leyendo solo los sectores necesarios.
+HEADER_HASH_MODES = {"nes", "snes", "n64", "fds", "lynx", "a78", "pce", "nds"}
+
 
 def hash_stream(fh) -> RomHash:
     """Hash a binary stream in chunks; only valid when payload == data (hash_mode 'direct')."""
