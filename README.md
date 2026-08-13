@@ -29,6 +29,7 @@ Tu colección son años de trabajo. RetroPerfect está diseñado para no perder 
 | **Detección de cambios** | Si un archivo cambió desde el escaneo, la operación se detiene |
 | **Preflight** | Comprueba espacio en disco, orígenes desaparecidos y colisiones antes de empezar |
 | **Papelera** | "Borrar" mueve a `.retroperfect/trash/` con restauración en un comando |
+| **Journal** | Cada aplicación queda registrada en `.retroperfect/applied/` (incluidos los fallos parciales) |
 
 ## Instalación
 
@@ -104,11 +105,11 @@ retroperfect trash-empty --confirm         # vaciado definitivo
 
 Más de 190 sistemas catalogados, desde NES hasta Dreamcast, pasando por ordenadores clásicos (Amiga, MSX, ZX Spectrum...), portátiles y arcade (MAME, FBNeo, CPS, Neo Geo...). Cada plataforma incluye su DAT recomendado, extensiones esperadas y diagnósticos específicos (cabeceras NES, endianness N64, variantes A78/BIN, sets arcade con parents/clones/BIOS/CHD).
 
-**Hashes RetroAchievements soportados**: cartuchos (hash directo), NES/FDS/SNES/Lynx/Atari 7800/PC Engine (descarte de cabeceras), N64 (normalización de endianness), Nintendo DS (cabecera + ARM9 + ARM7 + icono) y arcade (por nombre de set). Los sistemas de disco (PSX, Sega CD, Saturn...) aún no calculan hash RA.
+**Hashes RetroAchievements soportados**: cartuchos (hash directo), NES/FDS/SNES/Lynx/Atari 7800/PC Engine (descarte de cabeceras), N64 (normalización de endianness), Nintendo DS (cabecera + ARM9 + ARM7 + icono), arcade (por nombre de set) y sistemas de disco — PSX (ejecutable de SYSTEM.CNF), Sega CD/Saturn (cabecera del disco) y PSP (PARAM.SFO + EBOOT.BIN) sobre imágenes `.iso`, `.bin` y `.cue`. CHD, GDI multipista y CDI quedan pendientes.
 
 ## Parches soportados
 
-IPS, BPS, UPS y xdelta/VCDIFF, sueltos o dentro de ZIP, con verificación de CRC/MD5 del resultado. (PPF, APS y RUP todavía no.)
+IPS, BPS, UPS, PPF 2.0/3.0 y xdelta/VCDIFF, sueltos o dentro de ZIP, con verificación de CRC/MD5 del resultado. (APS y RUP todavía no.)
 
 ## Aplicación de escritorio
 
@@ -122,7 +123,7 @@ Genera un ejecutable único con PyInstaller (`dist/RetroPerfect`). Experimental.
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 87 tests
+pytest -q            # 100 tests
 ruff check src tests # lint
 mypy                 # type-checking estricto en verde
 ```
