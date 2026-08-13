@@ -41,15 +41,24 @@ def hash_stream(fh) -> RomHash:
 
 def hash_bytes(data: bytes, platform: Platform = Platform.NES) -> RomHash:
     payload = payload_for_platform(data, platform)
+    crc32 = f"{binascii.crc32(data) & 0xFFFFFFFF:08x}"
+    md5 = hashlib.md5(data).hexdigest()
+    sha1 = hashlib.sha1(data).hexdigest()
+    if payload is data:
+        payload_crc32, payload_md5, payload_sha1 = crc32, md5, sha1
+    else:
+        payload_crc32 = f"{binascii.crc32(payload) & 0xFFFFFFFF:08x}"
+        payload_md5 = hashlib.md5(payload).hexdigest()
+        payload_sha1 = hashlib.sha1(payload).hexdigest()
     return RomHash(
-        crc32=f"{binascii.crc32(data) & 0xFFFFFFFF:08x}",
-        md5=hashlib.md5(data).hexdigest(),
-        sha1=hashlib.sha1(data).hexdigest(),
+        crc32=crc32,
+        md5=md5,
+        sha1=sha1,
         size=len(data),
-        ra_hash=hashlib.md5(payload).hexdigest(),
-        payload_crc32=f"{binascii.crc32(payload) & 0xFFFFFFFF:08x}",
-        payload_md5=hashlib.md5(payload).hexdigest(),
-        payload_sha1=hashlib.sha1(payload).hexdigest(),
+        ra_hash=payload_md5,
+        payload_crc32=payload_crc32,
+        payload_md5=payload_md5,
+        payload_sha1=payload_sha1,
         payload_size=len(payload),
     )
 
