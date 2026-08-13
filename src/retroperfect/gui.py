@@ -35,6 +35,8 @@ ACTION_LABELS = {
     ActionMode.DELETE.value: "Borrar archivos",
 }
 
+# Estado global de la aplicación: RetroPerfect es una herramienta local
+# mono-usuario; todas las pestañas del navegador comparten este estado.
 state: dict[str, object] = {
     "platform": Platform.NES,
     "scan": None,
@@ -2651,8 +2653,12 @@ def build_ui() -> None:
 
                             async def confirm_apply_click() -> None:
                                 manifest = state["manifest"]
+                                if manifest is None:
+                                    plan_status.text = "No hay manifiesto que aplicar."
+                                    safety_dialog.close()
+                                    return
                                 try:
-                                    completed = apply_manifest(manifest, ActionMode(action.value), confirm=True)  # type: ignore[arg-type]
+                                    completed = await asyncio.to_thread(apply_manifest, manifest, None, True)  # type: ignore[arg-type]
                                     plan_status.text = f"Aplicadas {len(completed)} operaciones."
                                     safety_dialog.close()
                                 except Exception as exc:
@@ -2763,11 +2769,10 @@ def build_ui() -> None:
                             return
                         counts = {mode.value: 0 for mode in ActionMode}
                         for entry in manifest.entries:  # type: ignore[union-attr]
-                            counts[action.value] += 1
-                        destructive = action.value in {ActionMode.MOVE.value, ActionMode.DELETE.value}
-                        action_label = ACTION_LABELS.get(action.value, action.value)
+                            counts[entry.action.value] += 1
+                        destructive = bool(counts[ActionMode.MOVE.value] or counts[ActionMode.DELETE.value])
                         safety_summary.text = (
-                            f"Acción seleccionada: {action_label}. Operaciones: {len(manifest.entries)}. "
+                            f"Se aplicará la acción planificada de cada entrada. Operaciones: {len(manifest.entries)}. "
                             f"Copiar: {counts['copy']} · Mover: {counts['move']} · Borrar: {counts['delete']}. "
                             f"{'Esta operación tocará archivos originales.' if destructive else 'Esta operación copiará a destino.'}"
                         )

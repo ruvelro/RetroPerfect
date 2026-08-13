@@ -26,7 +26,7 @@ retroperfect report --manifest .retroperfect/manifests/latest.json --format html
 retroperfect gui
 ```
 
-The GUI runs locally and uses the same core as the CLI.
+The GUI runs locally and uses the same core as the CLI. It is a single-user tool: all browser tabs share the same session state.
 
 ## Safety
 
