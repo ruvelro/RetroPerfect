@@ -5,6 +5,9 @@ import zipfile
 from collections.abc import Callable
 from pathlib import Path
 
+import py7zr
+from py7zr.io import BytesIOFactory
+
 from .dat import DatIndex
 from .hashing import hash_bytes, hash_stream
 from .metadata import parse_no_intro_name
@@ -12,6 +15,9 @@ from .models import Platform, RomHash, ScannedRom, ScanResult
 from .platforms import platform_spec
 
 ProgressCallback = Callable[[dict[str, object]], None]
+
+# Contenedores admitidos para cualquier plataforma, aunque el spec no los liste.
+CONTAINER_SUFFIXES = {".zip", ".7z"}
 
 # Above this size, hash_mode 'direct' files (discs, CHDs...) are hashed in
 # streaming instead of loading the whole file in memory. Header-aware modes
@@ -21,6 +27,13 @@ STREAM_THRESHOLD_BYTES = 64 * 1024 * 1024
 
 def _should_stream(platform: Platform, size: int) -> bool:
     return platform_spec(platform).hash_mode == "direct" and size >= STREAM_THRESHOLD_BYTES
+
+
+def _read_7z_entries(archive: py7zr.SevenZipFile, targets: list[str], largest: int) -> dict:
+    """Extrae entradas de un 7z a memoria (el formato no permite lectura aleatoria en streaming)."""
+    factory = BytesIOFactory(limit=max(largest, 1))
+    archive.extract(targets=targets, factory=factory)
+    return factory.products
 
 
 def _scan_payload(
@@ -99,7 +112,7 @@ def scan_directory(
     supported_rom_extensions = set(spec.rom_extensions)
     arcade_mode = spec.kind == "arcade"
     all_paths = [input_path] if input_path.is_file() else sorted(input_path.rglob("*"))
-    paths = [path for path in all_paths if path.is_file() and path.suffix.lower() in supported_extensions]
+    paths = [path for path in all_paths if path.is_file() and (path.suffix.lower() in supported_extensions or path.suffix.lower() in CONTAINER_SUFFIXES)]
     seen_containers: set[str] = set()
     total = len(paths)
     if progress:
@@ -133,9 +146,23 @@ def scan_directory(
                             rom = _scan_payload(data=archive.read(info), source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
                         result.roms.append(rom)
                         seen_containers.add(str(path))
+            elif path.suffix.lower() == ".7z":
+                with py7zr.SevenZipFile(path) as archive:
+                    entries = [info for info in archive.list() if not info.is_directory and Path(info.filename).suffix.lower() in supported_rom_extensions]
+                    if not entries:
+                        result.unmatched_files.append(str(path))
+                        continue
+                    data_map = _read_7z_entries(archive, [info.filename for info in entries], max(info.uncompressed for info in entries))
+                for info in entries:
+                    buffer = data_map.get(info.filename)
+                    if buffer is None:
+                        continue
+                    rom = _scan_payload(data=buffer.read(), source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
+                    result.roms.append(rom)
+                    seen_containers.add(str(path))
             else:
                 result.unmatched_files.append(str(path))
-        except (OSError, zipfile.BadZipFile):
+        except (OSError, zipfile.BadZipFile, py7zr.Bad7zFile):
             result.unmatched_files.append(str(path))
         if progress:
             progress(

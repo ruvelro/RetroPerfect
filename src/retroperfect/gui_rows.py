@@ -30,7 +30,7 @@ ACTION_LABELS = {
 
 
 def _source_suffixes() -> set[str]:
-    suffixes = {".zip"}
+    suffixes = {".zip", ".7z"}
     for spec in list_platforms():
         suffixes.update(spec.rom_extensions)
     return suffixes

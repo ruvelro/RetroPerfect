@@ -209,6 +209,17 @@ def _verify_destination(destination: Path, expected_md5: str, source: Path) -> N
 def _read_entry_source(source_path: str, inner_path: str | None) -> bytes:
     source = Path(source_path)
     if inner_path:
+        if source.suffix.lower() == ".7z":
+            import py7zr
+            from py7zr.io import BytesIOFactory
+
+            with py7zr.SevenZipFile(source) as sevenzip:
+                sizes = [info.uncompressed for info in sevenzip.list() if info.filename == inner_path]
+                if not sizes:
+                    raise RuntimeError(f"No se encontró {inner_path} dentro de {source}")
+                factory = BytesIOFactory(limit=max(sizes[0], 1))
+                sevenzip.extract(targets=[inner_path], factory=factory)
+                return factory.products[inner_path].read()
         with zipfile.ZipFile(source) as archive:
             return archive.read(inner_path)
     return source.read_bytes()
