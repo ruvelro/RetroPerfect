@@ -32,12 +32,14 @@ def patch_cache_dir() -> Path:
 
 def download_patch(url: str) -> Path:
     parsed = urlparse(url)
-    filename = Path(parsed.path).name or hashlib.sha1(url.encode("utf-8")).hexdigest()
-    destination = patch_cache_dir() / filename
+    filename = Path(parsed.path).name or "patch"
+    url_key = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
+    destination = patch_cache_dir() / url_key / filename
     if destination.exists():
         return destination
     response = requests.get(url, timeout=60)
     response.raise_for_status()
+    destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(response.content)
     return destination
 
