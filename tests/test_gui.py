@@ -8,10 +8,10 @@ from retroperfect.gui import build_ui
 
 
 @pytest.fixture(autouse=True)
-def gui_page(user: User, monkeypatch: pytest.MonkeyPatch) -> None:
-    import retroperfect.gui as gui_module
+def gui_page(user: User) -> None:
+    from retroperfect.gui_state import reset_state
 
-    monkeypatch.setattr(gui_module, "state", gui_module.AppState())
+    reset_state()
 
     @ui.page("/")
     def page() -> None:
@@ -34,3 +34,12 @@ async def test_gui_scan_requires_source(user: User) -> None:
     await user.open("/")
     user.find("Escanear colección").click()
     await user.should_see("Selecciona un origen antes de escanear.")
+
+
+async def test_gui_platform_switch_rewires_all_tabs(user: User) -> None:
+    await user.open("/")
+    selects = list(user.find(ui.select).elements)
+    platform_select = next(element for element in selects if element._props.get("label") == "Plataforma")
+    platform_select.set_value("snes")
+    await user.should_see("SNES / SFC")
+    await user.should_see("La plataforma ha cambiado. Valida el setup y escanea de nuevo.")
