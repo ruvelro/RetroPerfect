@@ -54,3 +54,37 @@ def test_verify_clean_collection(tmp_path: Path) -> None:
     report = verify_collection(scan, catalog)
     assert report.clean
     assert report.matched_games == 1
+
+
+def test_report_verify_formats(tmp_path: Path) -> None:
+    import csv
+    import json
+
+    from retroperfect.verify import report_verify
+
+    dat = _dat_for(tmp_path, {"Correcto (Europe)": b"OK", "Perdido (USA)": b"MISSING"})
+    roms = tmp_path / "roms"
+    roms.mkdir()
+    (roms / "Correcto (Europe).nes").write_bytes(b"OK")
+    catalog = parse_logiqx_dat(dat)
+    scan = scan_directory(roms, Platform.NES, dat_index=DatIndex(catalog), dat_path=dat)
+    report = verify_collection(scan, catalog)
+
+    json_path = report_verify(report, tmp_path / "verify.json", "json")
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["missing"] == 1
+
+    csv_path = report_verify(report, tmp_path / "verify.csv", "csv")
+    rows = list(csv.reader(csv_path.read_text(encoding="utf-8").splitlines()))
+    assert ["estado", "juego", "detalle"] in rows
+    assert any(row and row[0] == "FALTA" for row in rows)
+
+    html_path = report_verify(report, tmp_path / "verify.html", "html")
+    content = html_path.read_text(encoding="utf-8")
+    assert "Verificación de colección" in content
+    assert "FALTA" in content
+
+    import pytest
+
+    with pytest.raises(ValueError, match="Formato"):
+        report_verify(report, tmp_path / "verify.xml", "xml")

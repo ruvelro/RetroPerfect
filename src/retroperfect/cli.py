@@ -160,15 +160,25 @@ def verify(
     dat: Annotated[Path, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = ...,  # type: ignore[assignment]
     workers: Annotated[int | None, typer.Option("--workers", min=1)] = None,
     limit: Annotated[int, typer.Option("--limit", help="Máximo de incidencias a listar.")] = 50,
+    format: Annotated[str, typer.Option("--format", help="Formato del informe: table, json, csv o html.")] = "table",
+    output: Annotated[Path | None, typer.Option("--output", help="Ruta del informe (por defecto .retroperfect/reports/verify.<ext>).")] = None,
 ) -> None:
     """Verifica la colección contra un DAT: faltantes, sobrantes, mal nombrados y duplicados."""
-    from .verify import verify_collection
+    from .verify import report_verify, verify_collection
 
     parsed_platform = _platform(platform)
     catalog = parse_dat(dat)
     cache_path = project_state_dir() / "scan-cache.sqlite3"
     scan_result = scan_directory(input, parsed_platform, dat_index=DatIndex(catalog), dat_path=dat, hash_cache=cache_path, workers=workers)
     report = verify_collection(scan_result, catalog)
+
+    if format != "table":
+        report_path = output or Path(f".retroperfect/reports/verify.{format}")
+        report_verify(report, report_path, format)
+        console.print(f"[green]Informe de verificación guardado en {report_path}[/green]")
+        if not report.clean:
+            raise typer.Exit(code=1)
+        return
 
     summary = Table(title="Verificación de colección")
     summary.add_column("Métrica")
