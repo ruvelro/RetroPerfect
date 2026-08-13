@@ -6,10 +6,12 @@ import html
 import os
 import shutil
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from .models import ActionMode, Manifest
 from .patching import download_and_apply_patch
+from .paths import project_state_dir
 
 
 def save_manifest(manifest: Manifest, path: Path) -> Path:
@@ -72,12 +74,20 @@ def _human_size(value: int) -> str:
     return f"{size:.1f} TB"
 
 
-def apply_manifest(manifest: Manifest, mode: ActionMode | None = None, confirm: bool = False, verify: bool = True) -> list[str]:
+def apply_manifest(
+    manifest: Manifest,
+    mode: ActionMode | None = None,
+    confirm: bool = False,
+    verify: bool = True,
+    hard_delete: bool = False,
+    trash_dir: Path | None = None,
+) -> list[str]:
     if not confirm:
         raise RuntimeError("No se aplica el manifiesto sin confirmación explícita.")
     issues = preflight_manifest(manifest)
     if issues:
         raise RuntimeError("No se puede aplicar el manifiesto:\n- " + "\n- ".join(issues))
+    session_trash: Path | None = None
     completed: list[str] = []
     seen: set[tuple[str, str | None, ActionMode]] = set()
     for entry in manifest.entries:
@@ -139,9 +149,27 @@ def apply_manifest(manifest: Manifest, mode: ActionMode | None = None, confirm: 
             else:
                 completed.append(f"movido {source} -> {destination}")
         elif action == ActionMode.DELETE:
-            source.unlink()
-            completed.append(f"borrado {source}")
+            if hard_delete:
+                source.unlink()
+                completed.append(f"borrado definitivo {source}")
+            else:
+                if session_trash is None:
+                    root = trash_dir or (project_state_dir() / "trash")
+                    session_trash = root / datetime.now().strftime("%Y%m%d-%H%M%S")
+                    session_trash.mkdir(parents=True, exist_ok=True)
+                target = _trash_target(session_trash, source.name)
+                shutil.move(str(source), str(target))
+                completed.append(f"movido a papelera {source} -> {target}")
     return completed
+
+
+def _trash_target(trash_session: Path, name: str) -> Path:
+    target = trash_session / name
+    counter = 1
+    while target.exists():
+        counter += 1
+        target = trash_session / f"{Path(name).stem} ({counter}){Path(name).suffix}"
+    return target
 
 
 def _file_md5(path: Path) -> str:

@@ -53,10 +53,30 @@ def test_apply_uses_entry_action_and_rejects_mismatched_mode(tmp_path: Path) -> 
     assert completed == [f"copiado {src} -> {destination} (md5 verificado)"]
 
 
-def test_apply_delete_manifest_removes_only_planned_sources(tmp_path: Path) -> None:
+def test_apply_delete_moves_to_trash_by_default(tmp_path: Path) -> None:
     keep = tmp_path / "keep.nes"
     drop = tmp_path / "drop.nes"
     keep.write_bytes(b"keep")
+    drop.write_bytes(b"drop")
+    trash = tmp_path / "trash"
+    manifest = Manifest(
+        id="m",
+        scan_id="s",
+        platform=Platform.NES,
+        profile_snapshot={},
+        entries=[ManifestEntry(bucket=OutputBucket.MAIN, action=ActionMode.DELETE, source_path=str(drop), rom_id="r")],
+    )
+    completed = apply_manifest(manifest, confirm=True, trash_dir=trash)
+    assert keep.exists()
+    assert not drop.exists()
+    trashed = list(trash.rglob("drop.nes"))
+    assert len(trashed) == 1
+    assert trashed[0].read_bytes() == b"drop"
+    assert "papelera" in completed[0]
+
+
+def test_apply_hard_delete_removes_file(tmp_path: Path) -> None:
+    drop = tmp_path / "drop.nes"
     drop.write_bytes(b"drop")
     manifest = Manifest(
         id="m",
@@ -65,9 +85,10 @@ def test_apply_delete_manifest_removes_only_planned_sources(tmp_path: Path) -> N
         profile_snapshot={},
         entries=[ManifestEntry(bucket=OutputBucket.MAIN, action=ActionMode.DELETE, source_path=str(drop), rom_id="r")],
     )
-    apply_manifest(manifest, confirm=True)
-    assert keep.exists()
+    completed = apply_manifest(manifest, confirm=True, hard_delete=True, trash_dir=tmp_path / "trash")
     assert not drop.exists()
+    assert not (tmp_path / "trash").exists()
+    assert "definitivo" in completed[0]
 
 
 def test_save_scan_prunes_old_history(tmp_path: Path) -> None:

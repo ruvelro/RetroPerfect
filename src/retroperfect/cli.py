@@ -127,10 +127,11 @@ def apply(
     mode: Annotated[ActionMode | None, typer.Option("--mode", help="Guarda de seguridad: debe coincidir con la acción planificada en el manifiesto.")] = None,
     confirm: Annotated[bool, typer.Option("--confirm/--no-confirm")] = False,
     verify: Annotated[bool, typer.Option("--verify/--no-verify", help="Verifica por MD5 cada archivo copiado/movido/parcheado.")] = True,
+    hard_delete: Annotated[bool, typer.Option("--hard-delete", help="Borra definitivamente en vez de mover a .retroperfect/trash.")] = False,
 ) -> None:
     """Apply a saved manifest using each entry's planned action. Requires --confirm."""
     loaded = load_manifest(manifest)
-    completed = apply_manifest(loaded, mode=mode, confirm=confirm, verify=verify)
+    completed = apply_manifest(loaded, mode=mode, confirm=confirm, verify=verify, hard_delete=hard_delete)
     for line in completed:
         console.print(line)
 
