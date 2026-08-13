@@ -11,6 +11,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
+from .http import http_get
 from .metadata import parse_no_intro_name
 from .models import Platform, ScanResult
 from .paths import config_dir, data_dir
@@ -118,7 +119,7 @@ def _request_json(endpoint: str, params: dict[str, str | int], *, max_retries: i
     url = f"{RA_API_ROOT}/{endpoint}"
     last_status = None
     for attempt in range(max_retries + 1):
-        response = requests.get(url, params=params, timeout=60)
+        response = http_get(url, params=params)
         last_status = response.status_code
         if response.status_code == 429:
             retry_after = response.headers.get("retry-after")

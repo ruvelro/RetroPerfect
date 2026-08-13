@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote
 
-import requests
-
+from .http import http_get
 from .paths import data_dir
 from .platforms import list_platforms
 
@@ -142,7 +141,7 @@ def download_dat(source_id: str) -> Path:
 
 
 def download_url(url: str, filename: str | None = None) -> Path:
-    response = requests.get(url, timeout=60)
+    response = http_get(url)
     response.raise_for_status()
     if filename is None:
         filename = _filename_from_response(url, response.headers.get("content-disposition"))

@@ -106,7 +106,7 @@ game (
 
         headers = {}
 
-    monkeypatch.setattr("retroperfect.dat_sources.requests.get", lambda *args, **kwargs: Response())
+    monkeypatch.setattr("retroperfect.dat_sources.http_get", lambda *args, **kwargs: Response())
     imported = download_and_import_url("https://example.test/nes.dat")
     assert imported[0].name == "NES"
     assert imported[0].games == 1

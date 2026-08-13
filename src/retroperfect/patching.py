@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-import requests
-
+from .http import http_get
 from .paths import data_dir
 
 SUPPORTED_PATCH_EXTENSIONS = {".ips", ".bps", ".ups", ".xdelta", ".vcdiff"}
@@ -36,7 +35,7 @@ def download_patch(url: str) -> Path:
     destination = patch_cache_dir() / url_key / filename
     if destination.exists():
         return destination
-    response = requests.get(url, timeout=60)
+    response = http_get(url)
     response.raise_for_status()
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(response.content)

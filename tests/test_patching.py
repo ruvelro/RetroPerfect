@@ -62,14 +62,14 @@ def test_download_patch_caches_per_url_not_per_filename(tmp_path: Path, monkeypa
         def raise_for_status(self) -> None:
             return None
 
-    monkeypatch.setattr(patching.requests, "get", lambda url, timeout: Response(payloads[url]))
+    monkeypatch.setattr(patching, "http_get", lambda url, **kwargs: Response(payloads[url]))
     path_a = patching.download_patch("https://example.test/game-a/patch.ips")
     path_b = patching.download_patch("https://example.test/game-b/patch.ips")
     assert path_a != path_b
     assert path_a.read_bytes() == b"A"
     assert path_b.read_bytes() == b"B"
     assert path_a.name == "patch.ips"
-    monkeypatch.setattr(patching.requests, "get", lambda url, timeout: (_ for _ in ()).throw(AssertionError("no debe descargar de nuevo")))
+    monkeypatch.setattr(patching, "http_get", lambda url, **kwargs: (_ for _ in ()).throw(AssertionError("no debe descargar de nuevo")))
     assert patching.download_patch("https://example.test/game-a/patch.ips") == path_a
 
 
