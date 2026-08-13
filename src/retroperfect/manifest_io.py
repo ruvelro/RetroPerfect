@@ -21,9 +21,12 @@ def load_manifest(path: Path) -> Manifest:
     return Manifest.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def apply_manifest(manifest: Manifest, mode: ActionMode | None = None, confirm: bool = False) -> list[str]:
+HASH_CHUNK_SIZE = 1024 * 1024
+
+
+def apply_manifest(manifest: Manifest, mode: ActionMode | None = None, confirm: bool = False, verify: bool = True) -> list[str]:
     if not confirm:
-        raise RuntimeError("Refusing to apply manifest without explicit confirmation.")
+        raise RuntimeError("No se aplica el manifiesto sin confirmación explícita.")
     completed: list[str] = []
     seen: set[tuple[str, str | None, ActionMode]] = set()
     for entry in manifest.entries:
@@ -40,37 +43,88 @@ def apply_manifest(manifest: Manifest, mode: ActionMode | None = None, confirm: 
         seen.add(key)
         if entry.patch_url:
             if action == ActionMode.DELETE:
-                completed.append(f"skipped patch for delete mode: {source}")
+                completed.append(f"parche omitido en modo borrado: {source}")
                 continue
             if not destination:
-                raise RuntimeError(f"Patch action needs a destination for {source}")
+                raise RuntimeError(f"La acción de parcheo necesita un destino para {source}")
             source_data = _read_entry_source(entry.source_path, entry.source_inner_path)
             patched, patch = download_and_apply_patch(source_data, entry.patch_url)
             patched_md5 = hashlib.md5(patched).hexdigest()
             if entry.patch_expected_md5 and patched_md5.lower() != entry.patch_expected_md5.lower():
                 raise RuntimeError(
-                    f"Patched ROM hash mismatch for {source}: expected {entry.patch_expected_md5}, got {patched_md5}"
+                    f"El hash del ROM parcheado no coincide para {source}: se esperaba {entry.patch_expected_md5} y se obtuvo {patched_md5}"
                 )
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(patched)
-            completed.append(f"patched {source} with {patch.name} -> {destination}")
+            if verify:
+                _verify_destination(destination, patched_md5, source)
+                completed.append(f"parcheado {source} con {patch.name} -> {destination} (md5 verificado)")
+            else:
+                completed.append(f"parcheado {source} con {patch.name} -> {destination}")
             continue
         if action == ActionMode.COPY:
             if not destination:
-                raise RuntimeError(f"Copy action needs a destination for {source}")
+                raise RuntimeError(f"La acción de copia necesita un destino para {source}")
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
-            completed.append(f"copied {source} -> {destination}")
+            if verify:
+                source_md5 = _copy_hashing(source, destination)
+                _check_source_md5(entry, source_md5)
+                _verify_destination(destination, source_md5, source)
+                completed.append(f"copiado {source} -> {destination} (md5 verificado)")
+            else:
+                shutil.copy2(source, destination)
+                completed.append(f"copiado {source} -> {destination}")
         elif action == ActionMode.MOVE:
             if not destination:
-                raise RuntimeError(f"Move action needs a destination for {source}")
+                raise RuntimeError(f"La acción de mover necesita un destino para {source}")
             destination.parent.mkdir(parents=True, exist_ok=True)
+            move_md5 = _file_md5(source) if verify else None
+            if move_md5 is not None:
+                _check_source_md5(entry, move_md5)
             shutil.move(str(source), str(destination))
-            completed.append(f"moved {source} -> {destination}")
+            if move_md5 is not None:
+                _verify_destination(destination, move_md5, source)
+                completed.append(f"movido {source} -> {destination} (md5 verificado)")
+            else:
+                completed.append(f"movido {source} -> {destination}")
         elif action == ActionMode.DELETE:
             source.unlink()
-            completed.append(f"deleted {source}")
+            completed.append(f"borrado {source}")
     return completed
+
+
+def _file_md5(path: Path) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as fh:
+        while chunk := fh.read(HASH_CHUNK_SIZE):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _copy_hashing(source: Path, destination: Path) -> str:
+    """Copia por chunks calculando el MD5 del origen en la misma pasada."""
+    digest = hashlib.md5()
+    with source.open("rb") as src, destination.open("wb") as dst:
+        while chunk := src.read(HASH_CHUNK_SIZE):
+            digest.update(chunk)
+            dst.write(chunk)
+    shutil.copystat(source, destination)
+    return digest.hexdigest()
+
+
+def _check_source_md5(entry, source_md5: str) -> None:
+    if entry.source_md5 and source_md5 != entry.source_md5.lower():
+        raise RuntimeError(
+            f"El origen {entry.source_path} cambió desde el escaneo (MD5 esperado {entry.source_md5}, actual {source_md5}). Reescanea y regenera el plan."
+        )
+
+
+def _verify_destination(destination: Path, expected_md5: str, source: Path) -> None:
+    destination_md5 = _file_md5(destination)
+    if destination_md5 != expected_md5:
+        raise RuntimeError(
+            f"Verificación fallida: {destination} (MD5 {destination_md5}) no coincide con el origen {source} (MD5 {expected_md5})."
+        )
 
 
 def _read_entry_source(source_path: str, inner_path: str | None) -> bytes:

@@ -42,7 +42,7 @@ def test_apply_manifest_patch_entry_verifies_expected_md5(tmp_path: Path, monkey
         ],
     )
     completed = apply_manifest(manifest, ActionMode.COPY, confirm=True)
-    assert "patched" in completed[0]
+    assert "parcheado" in completed[0]
     assert (tmp_path / "out" / "Otros" / "RetroAchievements" / "Game RA.nes").read_bytes() == patched
 
 

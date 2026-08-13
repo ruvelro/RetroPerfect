@@ -326,6 +326,7 @@ class ManifestEntry(BaseModel):
     action: ActionMode
     source_path: str
     source_inner_path: str | None = None
+    source_md5: str | None = None
     destination_path: str | None = None
     rom_id: str
     dat_name: str | None = None

@@ -390,6 +390,7 @@ def build_manifest(
                     bucket=output.bucket,
                     action=action,
                     source_path=winner.container_path,
+                    source_md5=winner.hashes.md5 if winner.inner_path is None else None,
                     destination_path=destination,
                     rom_id=winner.id,
                     dat_name=winner.dat_game.name if winner.dat_game else None,
