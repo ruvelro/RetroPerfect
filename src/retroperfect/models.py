@@ -219,11 +219,12 @@ class RomHash(BaseModel):
     payload_md5: str | None = None
     payload_sha1: str | None = None
     payload_size: int | None = None
+    ra_md5: str | None = None
 
     @property
     def ra_hash(self) -> str:
-        """MD5 del payload sin cabecera, que es el hash que usa RetroAchievements."""
-        return self.payload_md5 or self.md5
+        """Hash que usa RetroAchievements: específico de plataforma si existe, o el MD5 del payload."""
+        return self.ra_md5 or self.payload_md5 or self.md5
 
 
 class DatRom(BaseModel):

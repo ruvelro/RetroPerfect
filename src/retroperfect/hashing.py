@@ -8,6 +8,10 @@ from .platforms import platform_spec
 
 INES_HEADER_SIZE = 16
 SNES_COPIER_HEADER_SIZE = 512
+FDS_HEADER_SIZE = 16
+LYNX_HEADER_SIZE = 64
+A78_HEADER_SIZE = 128
+PCE_HEADER_SIZE = 512
 HASH_CHUNK_SIZE = 1024 * 1024
 
 
@@ -57,6 +61,7 @@ def hash_bytes(data: bytes, platform: Platform = Platform.NES) -> RomHash:
         payload_md5=payload_md5,
         payload_sha1=payload_sha1,
         payload_size=len(payload),
+        ra_md5=special_ra_md5(data, platform),
     )
 
 
@@ -72,7 +77,29 @@ def payload_for_platform(data: bytes, platform: Platform) -> bytes:
         return snes_payload(data)
     if mode == "n64":
         return n64_big_endian_payload(data)
+    if mode == "fds":
+        return fds_payload(data)
+    if mode == "lynx":
+        return lynx_payload(data)
+    if mode == "a78":
+        return a78_payload(data)
+    if mode == "pce":
+        return pce_payload(data)
     return data
+
+
+def special_ra_md5(data: bytes, platform: Platform) -> str | None:
+    """Hash RA que no coincide con el MD5 del payload (algoritmos rcheevos compuestos)."""
+    if platform_spec(platform).hash_mode == "nds":
+        assembled = nds_ra_payload(data)
+        if assembled is not None:
+            return hashlib.md5(assembled).hexdigest()
+    return None
+
+
+def arcade_ra_md5(set_name: str) -> str:
+    """RetroAchievements hashea arcade por el nombre del set en minúsculas, no por contenido."""
+    return hashlib.md5(set_name.lower().encode("utf-8")).hexdigest()
 
 
 def nes_payload(data: bytes) -> bytes:
@@ -81,6 +108,43 @@ def nes_payload(data: bytes) -> bytes:
 
 def snes_payload(data: bytes) -> bytes:
     return data[SNES_COPIER_HEADER_SIZE:] if len(data) % 1024 == SNES_COPIER_HEADER_SIZE else data
+
+
+def fds_payload(data: bytes) -> bytes:
+    return data[FDS_HEADER_SIZE:] if data.startswith(b"FDS\x1a") and len(data) > FDS_HEADER_SIZE else data
+
+
+def lynx_payload(data: bytes) -> bytes:
+    return data[LYNX_HEADER_SIZE:] if data.startswith(b"LYNX\x00") and len(data) > LYNX_HEADER_SIZE else data
+
+
+def a78_payload(data: bytes) -> bytes:
+    return data[A78_HEADER_SIZE:] if len(data) > A78_HEADER_SIZE and data[1:10] == b"ATARI7800" else data
+
+
+def pce_payload(data: bytes) -> bytes:
+    return data[PCE_HEADER_SIZE:] if len(data) > PCE_HEADER_SIZE and len(data) % (128 * 1024) == PCE_HEADER_SIZE else data
+
+
+def nds_ra_payload(data: bytes) -> bytes | None:
+    """Reproduce el hash NDS de rcheevos: cabecera (0x160) + ARM9 + ARM7 + icono/título (0xA00)."""
+    if len(data) < 0x160:
+        return None
+    arm9_offset = int.from_bytes(data[0x20:0x24], "little")
+    arm9_size = int.from_bytes(data[0x2C:0x30], "little")
+    arm7_offset = int.from_bytes(data[0x30:0x34], "little")
+    arm7_size = int.from_bytes(data[0x3C:0x40], "little")
+    icon_offset = int.from_bytes(data[0x68:0x6C], "little")
+    parts = [data[0:0x160]]
+    for offset, size in [(arm9_offset, arm9_size), (arm7_offset, arm7_size)]:
+        if size > len(data) or offset > len(data) - size:
+            return None
+        parts.append(data[offset : offset + size])
+    if icon_offset:
+        if icon_offset > len(data) - 0xA00:
+            return None
+        parts.append(data[icon_offset : icon_offset + 0xA00])
+    return b"".join(parts)
 
 
 def n64_big_endian_payload(data: bytes) -> bytes:

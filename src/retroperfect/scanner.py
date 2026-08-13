@@ -12,7 +12,7 @@ import py7zr
 from py7zr.io import BytesIOFactory
 
 from .dat import DatIndex
-from .hashing import hash_bytes, hash_stream
+from .hashing import arcade_ra_md5, hash_bytes, hash_stream
 from .metadata import parse_no_intro_name
 from .models import Platform, RomHash, ScannedRom, ScanResult
 from .platforms import platform_spec
@@ -104,6 +104,7 @@ def _scan_arcade_container(
         if cache:
             cache.put(str(path), None, platform, stat.st_size, stat.st_mtime_ns, hashes)
     set_name = path.parent.name if path.suffix.lower() == ".chd" else path.stem
+    hashes.ra_md5 = arcade_ra_md5(set_name)
     dat_game = dat_index.match_set(set_name) if dat_index else None
     display_name = (dat_game.description or dat_game.name) if dat_game else path.name
     metadata = parse_no_intro_name(display_name)
