@@ -48,7 +48,7 @@ from .gui_rows import (
     _source_suffixes,
     _unmatched_rows,
 )
-from .manifest_io import apply_manifest, report_manifest, save_manifest
+from .manifest_io import apply_manifest, preflight_manifest, report_manifest, save_manifest
 from .models import ActionMode, ExportLayout, OutputBucket, Platform, ProfileOutput, SelectionProfile
 from .paths import project_state_dir
 from .platforms import list_platforms, platform_options, platform_spec
@@ -1969,6 +1969,11 @@ def build_ui() -> None:
                             return
                         if not apply_confirm.value:
                             plan_status.text = "Marca la confirmación tras revisar el manifiesto."
+                            return
+                        issues = await asyncio.to_thread(preflight_manifest, manifest)
+                        if issues:
+                            plan_status.text = "Problemas antes de aplicar: " + " · ".join(issues)
+                            _log_activity(f"Preflight de aplicar con {len(issues)} problema(s)", "WARN")
                             return
                         counts = {mode.value: 0 for mode in ActionMode}
                         for entry in manifest.entries:  # type: ignore[union-attr]

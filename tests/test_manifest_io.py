@@ -137,3 +137,53 @@ def test_apply_detects_source_changed_since_scan(tmp_path: Path) -> None:
     )
     with pytest.raises(RuntimeError, match="cambió desde el escaneo"):
         apply_manifest(manifest, confirm=True)
+
+
+def _copy_entry(src: Path, dest: Path) -> ManifestEntry:
+    return ManifestEntry(bucket=OutputBucket.MAIN, action=ActionMode.COPY, source_path=str(src), destination_path=str(dest), rom_id=str(src))
+
+
+def test_preflight_detects_missing_source_and_collisions(tmp_path: Path) -> None:
+    from retroperfect.manifest_io import preflight_manifest
+
+    existing_a = tmp_path / "a.nes"
+    existing_b = tmp_path / "b.nes"
+    existing_a.write_bytes(b"A")
+    existing_b.write_bytes(b"B")
+    shared_dest = tmp_path / "out" / "same.nes"
+    manifest = Manifest(
+        id="m",
+        scan_id="s",
+        platform=Platform.NES,
+        profile_snapshot={},
+        entries=[
+            _copy_entry(existing_a, shared_dest),
+            _copy_entry(existing_b, shared_dest),
+            _copy_entry(tmp_path / "missing.nes", tmp_path / "out" / "missing.nes"),
+        ],
+    )
+    issues = preflight_manifest(manifest)
+    assert any("Colisión de destino" in issue for issue in issues)
+    assert any("Origen no encontrado" in issue for issue in issues)
+    with pytest.raises(RuntimeError, match="No se puede aplicar"):
+        apply_manifest(manifest, confirm=True)
+
+
+def test_preflight_detects_insufficient_space(tmp_path: Path, monkeypatch) -> None:
+    import collections
+
+    from retroperfect import manifest_io
+
+    src = tmp_path / "a.nes"
+    src.write_bytes(b"X" * 1024)
+    manifest = Manifest(
+        id="m",
+        scan_id="s",
+        platform=Platform.NES,
+        profile_snapshot={},
+        entries=[_copy_entry(src, tmp_path / "out" / "a.nes")],
+    )
+    usage = collections.namedtuple("usage", "total used free")
+    monkeypatch.setattr(manifest_io.shutil, "disk_usage", lambda path: usage(2048, 2000, 48))
+    issues = manifest_io.preflight_manifest(manifest)
+    assert any("Espacio insuficiente" in issue for issue in issues)

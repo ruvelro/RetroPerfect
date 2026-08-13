@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import html
+import os
 import shutil
 import zipfile
 from pathlib import Path
@@ -24,9 +25,59 @@ def load_manifest(path: Path) -> Manifest:
 HASH_CHUNK_SIZE = 1024 * 1024
 
 
+def preflight_manifest(manifest: Manifest) -> list[str]:
+    """Comprueba orígenes, colisiones de destino y espacio en disco antes de aplicar."""
+    issues: list[str] = []
+    destinations: dict[str, str] = {}
+    needed_by_device: dict[int, int] = {}
+    device_roots: dict[int, Path] = {}
+    for entry in manifest.entries:
+        source = Path(entry.source_path)
+        if not source.exists():
+            issues.append(f"Origen no encontrado: {source}")
+            continue
+        if not entry.destination_path:
+            continue
+        previous = destinations.get(entry.destination_path)
+        if previous is not None and previous != entry.source_path:
+            issues.append(f"Colisión de destino: {entry.destination_path} recibiría {previous} y también {entry.source_path}")
+        destinations[entry.destination_path] = entry.source_path
+        root = _existing_ancestor(Path(entry.destination_path))
+        device = os.stat(root).st_dev
+        cross_device_move = entry.action == ActionMode.MOVE and os.stat(source).st_dev != device
+        if bool(entry.patch_url) or entry.action == ActionMode.COPY or cross_device_move:
+            needed_by_device[device] = needed_by_device.get(device, 0) + source.stat().st_size
+            device_roots.setdefault(device, root)
+    for device, needed in needed_by_device.items():
+        root = device_roots[device]
+        free = shutil.disk_usage(root).free
+        if needed > free:
+            issues.append(f"Espacio insuficiente en {root}: se necesitan {_human_size(needed)} y quedan {_human_size(free)} libres.")
+    return issues
+
+
+def _existing_ancestor(path: Path) -> Path:
+    for candidate in [path, *path.parents]:
+        if candidate.exists():
+            return candidate
+    return Path(path.anchor or ".")
+
+
+def _human_size(value: int) -> str:
+    size = float(value)
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
 def apply_manifest(manifest: Manifest, mode: ActionMode | None = None, confirm: bool = False, verify: bool = True) -> list[str]:
     if not confirm:
         raise RuntimeError("No se aplica el manifiesto sin confirmación explícita.")
+    issues = preflight_manifest(manifest)
+    if issues:
+        raise RuntimeError("No se puede aplicar el manifiesto:\n- " + "\n- ".join(issues))
     completed: list[str] = []
     seen: set[tuple[str, str | None, ActionMode]] = set()
     for entry in manifest.entries:
