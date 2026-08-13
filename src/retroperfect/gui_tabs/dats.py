@@ -7,7 +7,7 @@ from pathlib import Path
 
 from nicegui import ui
 
-from ..dat_manager import compare_dats, download_and_import_source, download_and_import_url, import_dat_file
+from ..dat_manager import compare_dats, download_and_import_source, download_and_import_url, import_dat_file, stale_dats, update_installed_dats
 from ..dat_sources import DAT_SOURCES
 from ..gui_context import UiContext
 from ..gui_rows import (
@@ -79,6 +79,37 @@ def build(ctx: UiContext) -> None:
             ui.button("Descargar fuente", icon="download", on_click=download_online_click).props("color=primary")
             ui.button("Abrir fuente", icon="open_in_browser", on_click=open_online_click).props("outline")
             ui.button("Descargar URL", icon="link", on_click=download_url_click).props("outline")
+
+        ui.separator()
+        ui.label("Mantenimiento").classes("text-md font-semibold")
+        stale = stale_dats()
+        stale_label = ui.label(
+            f"{len(stale)} DAT(s) de fuentes directas llevan más de 7 días sin actualizar." if stale else "Los DATs de fuentes directas están al día (menos de 7 días)."
+        ).classes("text-sm " + ("text-amber-700" if stale else "text-gray-600"))
+
+        async def update_dats_click() -> None:
+            dat_manager_status.text = "Re-descargando DATs instalados de fuentes directas..."
+            results = await asyncio.to_thread(update_installed_dats)
+            if not results:
+                dat_manager_status.text = "No hay DATs de fuentes directas que actualizar."
+                return
+            updated = sum(1 for result in results if result.status == "actualizado")
+            errors = sum(1 for result in results if result.status == "error")
+            changed = "; ".join(f"{result.name}: {result.detail}" for result in results if result.status == "actualizado")
+            dat_manager_status.text = (
+                f"Actualización terminada: {updated} con cambios, {len(results) - updated - errors} sin cambios, {errors} errores."
+                + (f" Cambios: {changed}" if changed else "")
+            )
+            _log_activity(f"DATs actualizados: {updated} con cambios de {len(results)}", "OK" if not errors else "WARN")
+            remaining = stale_dats()
+            stale_label.text = (
+                f"{len(remaining)} DAT(s) de fuentes directas llevan más de 7 días sin actualizar." if remaining else "Los DATs de fuentes directas están al día (menos de 7 días)."
+            )
+            refresh_dat_table()
+            ctx.refresh_needed_table()
+
+        ui.button("Actualizar DATs instalados", icon="update", on_click=update_dats_click).props("outline")
+        ui.label("Para automatizarlo, programa 'retroperfect dat-update' con cron o el Programador de tareas.").classes("text-xs text-gray-500")
 
         ui.separator()
         ui.label("Descarga por lote").classes("text-md font-semibold")

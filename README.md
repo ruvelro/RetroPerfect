@@ -87,6 +87,21 @@ retroperfect sync-ra-details --platform nes
 
 A partir de ahí, cada escaneo marca las ROMs compatibles, y los perfiles con salida `ra` pueden exigir compatibilidad o generar la versión parcheada automáticamente.
 
+### Mantener los DATs al día
+
+Los DATs cambian cuando No-Intro añade o corrige dumps. RetroPerfect re-descarga los DATs instalados de fuentes directas y te dice qué cambió:
+
+```bash
+retroperfect dat-update
+```
+
+La GUI avisa en **Biblioteca DAT** cuando algún DAT lleva más de 7 días sin refrescar. Para automatizarlo, prográmalo con cron (o el Programador de tareas de Windows):
+
+```bash
+# Cada lunes a las 8:00, desde la carpeta del proyecto
+0 8 * * 1 cd /ruta/a/tu/coleccion && /ruta/al/venv/bin/retroperfect dat-update
+```
+
 ### Papelera
 
 ```bash

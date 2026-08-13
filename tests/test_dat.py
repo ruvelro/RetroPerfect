@@ -149,3 +149,60 @@ def test_crc_match_requires_matching_size(tmp_path: Path) -> None:
     assert index.match("adf3f363", md5, sha1, 4) is not None
     assert index.match("adf3f363", md5, sha1, 5) is None
     assert index.match("deadbeef", md5, sha1, 123) is not None
+
+
+def _fake_response(body: bytes):
+    class Response:
+        content = body
+        headers: dict = {}
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    return Response
+
+
+def test_update_installed_dats_reports_changes(tmp_path: Path, monkeypatch) -> None:
+    from retroperfect.dat_manager import stale_dats, update_installed_dats
+
+    monkeypatch.setattr("retroperfect.dat_sources.data_dir", lambda: tmp_path / "data")
+    version_one = b'clrmamepro ( name "NES" )\ngame ( name "Game (USA)" rom ( name "Game (USA).nes" size 4 crc ADF3F363 ) )'
+    version_two = version_one + b'\ngame ( name "Otro (Europe)" rom ( name "Otro (Europe).nes" size 4 crc DEADBEEF ) )'
+
+    monkeypatch.setattr("retroperfect.dat_sources.http_get", lambda *a, **k: _fake_response(version_one))
+    from retroperfect.dat_manager import download_and_import_source
+
+    download_and_import_source("libretro-nes-nointro")
+
+    # sin cambios: la fuente sirve el mismo contenido
+    results = update_installed_dats()
+    assert len(results) == 1
+    assert results[0].status == "sin cambios"
+
+    # la fuente publica una versión nueva
+    monkeypatch.setattr("retroperfect.dat_sources.http_get", lambda *a, **k: _fake_response(version_two))
+    results = update_installed_dats()
+    assert results[0].status == "actualizado"
+    assert "juegos 1 → 2" in results[0].detail
+    assert stale_dats() == []
+
+
+def test_stale_dats_flags_old_direct_downloads(tmp_path: Path, monkeypatch) -> None:
+    import json as json_module
+
+    from retroperfect.dat_manager import registry_path, stale_dats
+
+    monkeypatch.setattr("retroperfect.dat_sources.data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr("retroperfect.dat_sources.http_get", lambda *a, **k: _fake_response(b'clrmamepro ( name "NES" )\ngame ( name "G" rom ( name "G.nes" size 1 crc 00000000 ) )'))
+    from retroperfect.dat_manager import download_and_import_source
+
+    download_and_import_source("libretro-nes-nointro")
+    assert stale_dats(days=7) == []
+
+    rows = json_module.loads(registry_path().read_text(encoding="utf-8"))
+    rows[0]["imported_at"] = "2020-01-01T00:00:00+00:00"
+    registry_path().write_text(json_module.dumps(rows), encoding="utf-8")
+    stale = stale_dats(days=7)
+    assert len(stale) == 1
+    assert stale[0].name == "NES"

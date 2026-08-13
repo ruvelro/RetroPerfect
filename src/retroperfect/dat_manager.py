@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import zipfile
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from .dat import parse_dat
-from .dat_sources import DAT_SOURCES, dat_download_dir, download_dat, download_url
+from .dat_sources import DAT_SOURCES, DatSource, dat_download_dir, download_dat, download_url
 from .models import Platform
 from .platforms import platform_from_dat_name, platform_spec
 
@@ -231,6 +232,66 @@ def _dat_notes(parent_clone: bool, header_mode: str, recommended: bool, platform
         parts.append("Variante DAT recomendable" if recommended else "Revisa que coincida con el formato del romset")
     parts.append("Parent/Clone ideal para 1G1R" if parent_clone else "Sin Parent/Clone: 1G1R por nombre")
     return " · ".join(parts)
+
+
+class DatUpdateResult(BaseModel):
+    name: str
+    platform: str | None = None
+    status: str
+    detail: str = ""
+
+
+def _file_md5(path: Path) -> str:
+    digest = hashlib.md5()
+    with path.open("rb") as fh:
+        while chunk := fh.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def updatable_dats() -> list[tuple[DatMetadata, DatSource]]:
+    """DATs instalados que provienen de una fuente online de descarga directa."""
+    sources_by_label = {source.label: source for source in DAT_SOURCES if source.direct_download}
+    return [(dat, sources_by_label[dat.source]) for dat in list_installed_dats() if dat.source in sources_by_label]
+
+
+def stale_dats(days: int = 7) -> list[DatMetadata]:
+    """DATs actualizables cuya última importación tiene más de `days` días."""
+    threshold = datetime.now(UTC) - timedelta(days=days)
+    stale = []
+    for dat, _source in updatable_dats():
+        imported_at = dat.imported_at if dat.imported_at.tzinfo else dat.imported_at.replace(tzinfo=UTC)
+        if imported_at < threshold:
+            stale.append(dat)
+    return stale
+
+
+def update_installed_dats(platform: Platform | None = None) -> list[DatUpdateResult]:
+    """Re-descarga los DATs instalados de fuentes directas y reporta cambios."""
+    results: list[DatUpdateResult] = []
+    for dat, source in updatable_dats():
+        if platform is not None and dat.platform not in {None, platform.value}:
+            continue
+        old_path = Path(dat.path)
+        old_md5 = _file_md5(old_path) if old_path.exists() else ""
+        try:
+            imported = download_and_import_source(source.id)
+        except Exception as exc:
+            results.append(DatUpdateResult(name=dat.name, platform=dat.platform, status="error", detail=str(exc)))
+            continue
+        updated = next((item for item in imported if item.path == dat.path), imported[0])
+        if _file_md5(Path(updated.path)) == old_md5:
+            results.append(DatUpdateResult(name=updated.name, platform=updated.platform, status="sin cambios", detail=f"{updated.games} juegos, {updated.roms} ROMs"))
+        else:
+            results.append(
+                DatUpdateResult(
+                    name=updated.name,
+                    platform=updated.platform,
+                    status="actualizado",
+                    detail=f"juegos {dat.games} → {updated.games}, ROMs {dat.roms} → {updated.roms}",
+                )
+            )
+    return results
 
 
 def compare_dats(left: Path, right: Path) -> DatComparison:

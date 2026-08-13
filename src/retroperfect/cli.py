@@ -235,6 +235,28 @@ def dat_download(
         console.print(f"[green]Downloaded[/green] {dat.name} ({dat.format}, {dat.header_mode}, games={dat.games}, roms={dat.roms}, recommended={dat.recommended})")
 
 
+@app.command("dat-update")
+def dat_update(
+    platform: Annotated[str | None, typer.Option("--platform", help="Limita la actualización a una plataforma.")] = None,
+) -> None:
+    """Re-descarga los DATs instalados de fuentes directas y reporta cambios. Ideal para cron."""
+    from .dat_manager import update_installed_dats
+
+    results = update_installed_dats(_platform(platform) if platform else None)
+    if not results:
+        console.print("No hay DATs instalados de fuentes con descarga directa. Los importados a mano se actualizan re-importándolos.")
+        return
+    table = Table(title="Actualización de DATs")
+    for column in ["Nombre", "Plataforma", "Estado", "Detalle"]:
+        table.add_column(column)
+    for result in results:
+        color = {"actualizado": "green", "sin cambios": "blue", "error": "red"}.get(result.status, "white")
+        table.add_row(result.name, result.platform or "", f"[{color}]{result.status}[/{color}]", result.detail)
+    console.print(table)
+    if any(result.status == "error" for result in results):
+        raise typer.Exit(code=1)
+
+
 @app.command("dat-list")
 def dat_list() -> None:
     """Lista los DATs instalados."""
