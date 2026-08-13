@@ -139,7 +139,7 @@ def _request_json(endpoint: str, params: dict[str, object], *, max_retries: int 
     raise RuntimeError(f"No se pudo consultar RetroAchievements. Último estado HTTP: {last_status}.")
 
 
-def sync_ra_hashes(platform: Platform, username: str | None = None, api_key: str | None = None) -> int:
+def sync_ra_hashes(platform: Platform, username: str | None = None, api_key: str | None = None, cache: Path | None = None) -> int:
     user, key = load_credentials(username, api_key)
     save_credentials(user, key)
     spec = platform_spec(platform)
@@ -147,11 +147,19 @@ def sync_ra_hashes(platform: Platform, username: str | None = None, api_key: str
         raise RuntimeError(f"{spec.short_name} no tiene soporte RetroAchievements configurado todavia.")
     console_id = spec.ra_console_id
     rows = _request_json("API_GetGameList.php", {"z": user, "y": key, "i": console_id, "f": 1, "h": 1})
-    conn = init_cache()
+    if not isinstance(rows, list):
+        raise RuntimeError("Respuesta inesperada de RetroAchievements al listar juegos; revisa usuario y API key.")
+    conn = init_cache(cache)
     count = 0
     with conn:
         for row in rows:
-            game_id = int(row.get("ID") or row.get("GameID"))
+            if not isinstance(row, dict):
+                continue
+            raw_id = row.get("ID") or row.get("GameID")
+            try:
+                game_id = int(raw_id)
+            except (TypeError, ValueError):
+                continue
             title = row.get("Title")
             hashes: Iterable[str] = row.get("Hashes") or row.get("MD5") or []
             if isinstance(hashes, str):
@@ -182,7 +190,7 @@ def sync_ra_patch_details(
     progress: Callable[[dict[str, int]], None] | None = None,
     request_delay: float | None = None,
 ) -> int:
-    _user, key = load_credentials(username, api_key)
+    user, key = load_credentials(username, api_key)
     conn = init_cache(cache)
     if game_ids is None:
         rows = conn.execute(
@@ -211,9 +219,11 @@ def sync_ra_patch_details(
         progress({"current": 0, "total": total, "updated": 0})
     with conn:
         for index, game_id in enumerate(ids, start=1):
-            payload = _request_json("API_GetGameHashes.php", {"y": key, "i": game_id})
-            rows = payload.get("Results") or payload.get("results") or []
+            payload = _request_json("API_GetGameHashes.php", {"z": user, "y": key, "i": game_id})
+            rows = (payload.get("Results") or payload.get("results") or []) if isinstance(payload, dict) else []
             for row in rows:
+                if not isinstance(row, dict):
+                    continue
                 md5 = (row.get("MD5") or row.get("md5") or "").lower()
                 if not md5:
                     continue
