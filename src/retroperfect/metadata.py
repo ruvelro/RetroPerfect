@@ -119,7 +119,7 @@ def parse_no_intro_name(name: str) -> DetectedMetadata:
                 elif len(version) == 1 and version.isalpha():
                     revision = ord(version.upper()) - ord("A") + 1
             for keyword in TAG_KEYWORDS:
-                if keyword.lower() in part.lower() and keyword not in tags:
+                if keyword not in tags and re.search(rf"\b{re.escape(keyword)}\b", part, re.I):
                     tags.append(keyword)
         languages_found = re.findall(r"\b(En|Es|Ja|Jp|Fr|De|It|Pt|Nl|Sv)\b", group)
         if len(languages_found) >= 2 and "Multi" not in languages:

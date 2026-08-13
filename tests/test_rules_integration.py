@@ -340,3 +340,37 @@ def test_scan_reports_progress(tmp_path: Path) -> None:
     assert updates[0]["phase"] == "start"
     assert updates[-1]["phase"] == "done"
     assert updates[-1]["roms"] == 1
+
+
+def _plain_rom(path: str, title: str):
+    from retroperfect.metadata import parse_no_intro_name
+    from retroperfect.models import RomHash, ScannedRom
+
+    return ScannedRom(
+        id=path,
+        source_path=path,
+        container_path=path,
+        platform=Platform.NES,
+        hashes=RomHash(crc32="0" * 8, md5="0" * 32, sha1="0" * 40, size=1),
+        metadata=parse_no_intro_name(Path(path).name),
+    )
+
+
+def test_strict_exclusions_ignore_substrings_in_titles_and_paths() -> None:
+    from retroperfect.rules import _special_folder, _strict_exclusions
+
+    for name in ["Bad Dudes (USA).nes", "Demolition Man (USA).nes", "Sunland Quest (Europe).nes", "Promotion Chess (USA).nes"]:
+        rom = _plain_rom(f"/roms/hacks-backup/{name}", name)
+        assert _strict_exclusions(rom) == [], name
+        assert _special_folder(rom) is None, name
+
+
+def test_strict_exclusions_still_detect_real_tags() -> None:
+    from retroperfect.rules import _special_folder, _strict_exclusions
+
+    beta = _plain_rom("/roms/Game (USA) (Beta).nes", "Game")
+    assert _strict_exclusions(beta) == ["Beta"]
+    assert _special_folder(beta) == "Prototypes"
+    unl = _plain_rom("/roms/Game (World) (Unl).nes", "Game")
+    assert _strict_exclusions(unl) == ["Unl"]
+    assert _special_folder(unl) == "Unlicensed"

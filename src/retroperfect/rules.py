@@ -40,8 +40,6 @@ STRICT_1G1R_TAGS = {
     "Virtual Console",
 }
 
-STRICT_1G1R_KEYWORDS = {tag.lower() for tag in STRICT_1G1R_TAGS}
-
 EUROPEAN_REGIONS = {
     "Europe",
     "Spain",
@@ -130,13 +128,18 @@ def _allowed(rom: ScannedRom, output: ProfileOutput) -> tuple[bool, list[str]]:
     return True, reasons
 
 
+def _rom_tags(rom: ScannedRom) -> set[str]:
+    tags = set(rom.metadata.tags)
+    if rom.dat_game:
+        for name in filter(None, [rom.dat_game.name, rom.dat_game.description]):
+            tags.update(parse_no_intro_name(name).tags)
+    if rom.inner_path:
+        tags.update(parse_no_intro_name(rom.inner_path).tags)
+    return tags
+
+
 def _strict_exclusions(rom: ScannedRom) -> list[str]:
-    excluded = {tag for tag in rom.metadata.tags if tag in STRICT_1G1R_TAGS}
-    text = " ".join(filter(None, [rom.source_path, rom.inner_path or "", rom.dat_game.name if rom.dat_game else ""])).lower()
-    for keyword in STRICT_1G1R_KEYWORDS:
-        if keyword in text:
-            excluded.add(next(tag for tag in STRICT_1G1R_TAGS if tag.lower() == keyword))
-    return sorted(excluded)
+    return sorted(_rom_tags(rom) & STRICT_1G1R_TAGS)
 
 
 def _score(rom: ScannedRom, output: ProfileOutput) -> tuple:
@@ -187,9 +190,9 @@ def _special_folder(rom: ScannedRom) -> str | None:
         folder = SPECIAL_TAG_FOLDERS.get(tag)
         if folder:
             return folder
-    text = " ".join(filter(None, [rom.source_path, rom.inner_path or "", rom.dat_game.name if rom.dat_game else ""])).lower()
-    for tag, folder in SPECIAL_TAG_FOLDERS.items():
-        if tag.lower() in text:
+    for tag in sorted(_rom_tags(rom)):
+        folder = SPECIAL_TAG_FOLDERS.get(tag)
+        if folder:
             return folder
     return None
 
