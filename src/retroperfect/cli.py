@@ -153,6 +153,48 @@ def report(
     console.print(f"[green]Report saved to {output_path}[/green]")
 
 
+@app.command()
+def verify(
+    platform: Annotated[str, typer.Option("--platform")] = "nes",
+    input: Annotated[Path, typer.Option("--input", exists=True, file_okay=True, dir_okay=True, readable=True)] = Path("."),
+    dat: Annotated[Path, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = ...,  # type: ignore[assignment]
+    workers: Annotated[int | None, typer.Option("--workers", min=1)] = None,
+    limit: Annotated[int, typer.Option("--limit", help="Máximo de incidencias a listar.")] = 50,
+) -> None:
+    """Verifica la colección contra un DAT: faltantes, sobrantes, mal nombrados y duplicados."""
+    from .verify import verify_collection
+
+    parsed_platform = _platform(platform)
+    catalog = parse_dat(dat)
+    cache_path = project_state_dir() / "scan-cache.sqlite3"
+    scan_result = scan_directory(input, parsed_platform, dat_index=DatIndex(catalog), dat_path=dat, hash_cache=cache_path, workers=workers)
+    report = verify_collection(scan_result, catalog)
+
+    summary = Table(title="Verificación de colección")
+    summary.add_column("Métrica")
+    summary.add_column("Valor", justify="right")
+    summary.add_row("Juegos en el DAT", str(report.dat_games))
+    summary.add_row("Juegos en el romset", str(report.romset_games))
+    summary.add_row("Coincidentes", str(report.matched_games))
+    summary.add_row("Faltantes", str(report.missing))
+    summary.add_row("Fuera del DAT", str(report.unmatched))
+    summary.add_row("Mal nombrados", str(report.misnamed))
+    summary.add_row("Duplicados", str(report.duplicates))
+    console.print(summary)
+
+    if report.clean:
+        console.print("[green]Colección verificada: sin incidencias respecto al DAT.[/green]")
+        return
+    detail = Table(title=f"Incidencias ({min(len(report.issues), limit)} de {len(report.issues)})")
+    detail.add_column("Estado")
+    detail.add_column("Juego")
+    detail.add_column("Detalle")
+    for issue in report.issues[:limit]:
+        detail.add_row(issue.status, issue.title, issue.detail)
+    console.print(detail)
+    raise typer.Exit(code=1)
+
+
 @app.command("dat-import")
 def dat_import(path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, readable=True)]) -> None:
     """Importa un .dat/.xml/.zip de DAT-o-MATIC en la biblioteca local de DATs."""
