@@ -33,7 +33,9 @@ Tu colección son años de trabajo. RetroPerfect está diseñado para no perder 
 
 ## Instalación
 
-Necesitas Python 3.11 o superior.
+**Sin Python** — descarga el ZIP de tu sistema (Windows, macOS o Linux) desde [Releases](https://github.com/ruvelro/RetroPerfect/releases), descomprímelo y ejecuta `RetroPerfect`. Se abre la interfaz en tu navegador.
+
+**Con Python** (3.11 o superior):
 
 ```bash
 git clone https://github.com/ruvelro/RetroPerfect.git
@@ -113,11 +115,12 @@ IPS, BPS, UPS, PPF 2.0/3.0 y xdelta/VCDIFF, sueltos o dentro de ZIP, con verific
 
 ## Aplicación de escritorio
 
-```bash
-./scripts/build-app.sh
-```
+Cada tag `v*` publica automáticamente ZIPs para Windows, macOS y Linux en [Releases](https://github.com/ruvelro/RetroPerfect/releases). Para construirla localmente:
 
-Genera un ejecutable único con PyInstaller (`dist/RetroPerfect`). Experimental.
+```bash
+./scripts/build-app.sh            # carpeta dist/RetroPerfect/ + zip (arranque instantáneo)
+./scripts/build-app.sh --onefile  # ejecutable único (arranca más lento)
+```
 
 ## Desarrollo
 
