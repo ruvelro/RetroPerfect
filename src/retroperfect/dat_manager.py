@@ -92,16 +92,16 @@ def import_dat_zip(path: Path, source: str = "manual-zip") -> list[DatMetadata]:
             destination.write_bytes(archive.read(info))
             imported.append(register_dat(destination, source=source))
     if not imported:
-        raise ValueError("ZIP does not contain .dat or .xml files.")
+        raise ValueError("El ZIP no contiene archivos .dat o .xml.")
     return imported
 
 
 def download_and_import_source(source_id: str) -> list[DatMetadata]:
     source = next((item for item in DAT_SOURCES if item.id == source_id), None)
     if source is None:
-        raise ValueError(f"Unknown DAT source: {source_id}")
+        raise ValueError(f"Fuente DAT desconocida: {source_id}")
     if not source.direct_download:
-        raise RuntimeError(f"{source.label} requires browser preparation. Open {source.url} and import the resulting ZIP.")
+        raise RuntimeError(f"{source.label} requiere descarga manual en el navegador. Abre {source.url} e importa el ZIP resultante.")
     path = download_dat(source_id)
     return import_dat_file(path, source=source.label)
 
@@ -154,7 +154,7 @@ def inspect_dat_zip(path: Path, source: str = "manual-zip") -> list[DatMetadata]
             destination.write_bytes(archive.read(info))
             inspected.append(inspect_dat(destination, source=source))
     if not inspected:
-        raise ValueError("ZIP does not contain .dat or .xml files.")
+        raise ValueError("El ZIP no contiene archivos .dat o .xml.")
     return inspected
 
 

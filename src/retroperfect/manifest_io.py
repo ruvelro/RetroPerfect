@@ -285,5 +285,5 @@ td,th{{border-bottom:1px solid #e4eaec;padding:.55rem;vertical-align:top;font-si
             encoding="utf-8",
         )
     else:
-        raise ValueError(f"Unsupported report format: {fmt}")
+        raise ValueError(f"Formato de reporte no soportado: {fmt}")
     return path

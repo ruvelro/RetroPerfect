@@ -46,7 +46,7 @@ def load_credentials(username: str | None = None, api_key: str | None = None) ->
         return username, api_key
     path = credentials_path()
     if not path.exists():
-        raise RuntimeError("RetroAchievements credentials are missing. Provide --username and --api-key once.")
+        raise RuntimeError("Faltan las credenciales de RetroAchievements. Indica --username y --api-key una vez.")
     data = json.loads(path.read_text(encoding="utf-8"))
     return username or data["username"], api_key or data["api_key"]
 

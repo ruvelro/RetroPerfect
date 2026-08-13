@@ -19,7 +19,7 @@ from .rules import build_manifest
 from .scanner import scan_directory
 from .storage import load_scan, save_scan
 
-app = typer.Typer(help="RetroPerfect ROM curation toolkit.")
+app = typer.Typer(help="Herramientas RetroPerfect para curar colecciones de ROMs.")
 console = Console()
 
 
@@ -28,7 +28,7 @@ def _platform(value: str) -> Platform:
         return Platform(value)
     except ValueError as exc:
         supported = ", ".join(platform_options())
-        raise typer.BadParameter(f"Unsupported platform '{value}'. Supported: {supported}.") from exc
+        raise typer.BadParameter(f"Plataforma no soportada '{value}'. Soportadas: {supported}.") from exc
 
 
 @app.command()
@@ -38,7 +38,7 @@ def scan(
     dat: Annotated[Path | None, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
     annotate_ra: Annotated[bool, typer.Option("--annotate-ra/--no-annotate-ra")] = True,
 ) -> None:
-    """Scan loose ROM files and ZIP containers for a platform."""
+    """Escanea ROMs sueltas y contenedores ZIP de una plataforma."""
     parsed_platform = _platform(platform)
     dat_path = dat
     if dat_path and dat_path.suffix.lower() == ".zip":
@@ -68,7 +68,7 @@ def sync_ra(
     details: Annotated[bool, typer.Option("--details/--no-details")] = False,
     details_limit: Annotated[int | None, typer.Option("--details-limit")] = None,
 ) -> None:
-    """Sync RetroAchievements hash cache for a platform."""
+    """Sincroniza la caché de hashes RetroAchievements de una plataforma."""
     parsed_platform = _platform(platform)
     count = sync_ra_hashes(parsed_platform, username=username, api_key=api_key)
     console.print(f"[green]Cached {count} RetroAchievements hashes.[/green]")
@@ -84,7 +84,7 @@ def sync_ra_details(
     api_key: Annotated[str | None, typer.Option("--api-key")] = None,
     limit: Annotated[int | None, typer.Option("--limit")] = None,
 ) -> None:
-    """Sync RA Supported Game Files metadata, including labels and patch URLs."""
+    """Sincroniza metadatos RA Supported Game Files, incluidos labels y URLs de parches."""
     count = sync_ra_patch_details(_platform(platform), username=username, api_key=api_key, limit=limit)
     console.print(f"[green]Updated {count} RetroAchievements hash details/patch labels.[/green]")
 
@@ -100,7 +100,7 @@ def plan(
     auto_patch_ra: Annotated[bool | None, typer.Option("--auto-patch-ra/--no-auto-patch-ra")] = None,
     manifest_out: Annotated[Path, typer.Option("--manifest-out")] = Path(".retroperfect/manifests/latest.json"),
 ) -> None:
-    """Create a preview manifest from a scan and selection profile."""
+    """Crea un manifiesto de previsualización a partir de un escaneo y un perfil."""
     scan_result = load_scan(scan)
     selected_outputs = [OutputBucket(item.strip()) for item in outputs.split(",") if item.strip()]
     selection_profile = load_profile(profile)
@@ -129,7 +129,7 @@ def apply(
     verify: Annotated[bool, typer.Option("--verify/--no-verify", help="Verifica por MD5 cada archivo copiado/movido/parcheado.")] = True,
     hard_delete: Annotated[bool, typer.Option("--hard-delete", help="Borra definitivamente en vez de mover a .retroperfect/trash.")] = False,
 ) -> None:
-    """Apply a saved manifest using each entry's planned action. Requires --confirm."""
+    """Aplica un manifiesto guardado usando la acción planificada de cada entrada. Requiere --confirm."""
     loaded = load_manifest(manifest)
     completed = apply_manifest(loaded, mode=mode, confirm=confirm, verify=verify, hard_delete=hard_delete)
     for line in completed:
@@ -142,7 +142,7 @@ def report(
     format: Annotated[str, typer.Option("--format")] = "html",
     output: Annotated[Path | None, typer.Option("--output")] = None,
 ) -> None:
-    """Generate a report from a manifest."""
+    """Genera un reporte a partir de un manifiesto."""
     loaded = load_manifest(manifest)
     output_path = output or Path(f".retroperfect/reports/{loaded.id}.{format}")
     report_manifest(loaded, output_path, format)
@@ -151,7 +151,7 @@ def report(
 
 @app.command("dat-import")
 def dat_import(path: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, readable=True)]) -> None:
-    """Import a DAT-o-MATIC .dat/.xml/.zip file into the local DAT library."""
+    """Importa un .dat/.xml/.zip de DAT-o-MATIC en la biblioteca local de DATs."""
     imported = import_dat_file(path)
     for dat in imported:
         console.print(f"[green]Imported[/green] {dat.name} ({dat.format}, {dat.header_mode}, games={dat.games}, roms={dat.roms}, recommended={dat.recommended})")
@@ -164,7 +164,7 @@ def dat_download(
     url: Annotated[str | None, typer.Option("--url")] = None,
     filename: Annotated[str | None, typer.Option("--filename")] = None,
 ) -> None:
-    """Download and import an online DAT source or direct DAT/XML/ZIP URL."""
+    """Descarga e importa una fuente DAT online o una URL directa DAT/XML/ZIP."""
     if not source and not url:
         parsed_platform = _platform(platform)
         table = Table(title="Online DAT Sources")
@@ -181,7 +181,7 @@ def dat_download(
 
 @app.command("dat-list")
 def dat_list() -> None:
-    """List installed DATs."""
+    """Lista los DATs instalados."""
     table = Table(title="Installed DATs")
     for column in ["Name", "Source", "Format", "Header", "Recommended", "Games", "ROMs", "P/C", "Path"]:
         table.add_column(column)
@@ -195,7 +195,7 @@ def dat_compare(
     left: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, readable=True)],
     right: Annotated[Path, typer.Argument(exists=True, file_okay=True, dir_okay=False, readable=True)],
 ) -> None:
-    """Compare two DATs by game groups and ROM hashes."""
+    """Compara dos DATs por grupos de juegos y hashes de ROMs."""
     comparison = compare_dats(left, right)
     table = Table(title=f"{comparison.left_name} vs {comparison.right_name}")
     table.add_column("Metric")
@@ -215,7 +215,7 @@ def validate(
     dat: Annotated[Path | None, typer.Option("--dat", exists=False)] = None,
     output_dir: Annotated[Path | None, typer.Option("--output-dir", exists=False)] = None,
 ) -> None:
-    """Validate source, DAT, and output choices before scanning."""
+    """Valida origen, DAT y salida antes de escanear."""
     issues = validate_setup(input, dat, output_dir)
     if not issues:
         console.print("[green]Configuration looks ready.[/green]")
@@ -226,7 +226,7 @@ def validate(
 
 @app.command()
 def gui(host: str = "127.0.0.1", port: int = 8080) -> None:
-    """Start the local NiceGUI interface."""
+    """Arranca la interfaz local NiceGUI."""
     from .gui import run
 
     run(host=host, port=port)

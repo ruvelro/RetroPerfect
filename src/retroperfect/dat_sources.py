@@ -135,9 +135,9 @@ def list_dat_sources(platform: str = "nes") -> list[DatSource]:
 def download_dat(source_id: str) -> Path:
     source = next((item for item in DAT_SOURCES if item.id == source_id), None)
     if source is None:
-        raise ValueError(f"Unknown DAT source: {source_id}")
+        raise ValueError(f"Fuente DAT desconocida: {source_id}")
     if not source.direct_download:
-        raise RuntimeError(f"{source.label} is not a direct download URL. Open it in a browser and import the downloaded ZIP.")
+        raise RuntimeError(f"{source.label} no es una URL de descarga directa. Ábrela en el navegador e importa el ZIP descargado.")
     return download_url(source.url, source.filename)
 
 
