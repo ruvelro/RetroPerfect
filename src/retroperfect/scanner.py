@@ -29,6 +29,9 @@ CONTAINER_SUFFIXES = {".zip", ".7z"}
 # cabecera (nes/snes/n64/nds...) necesitan los datos completos, pero son pequeños.
 STREAM_THRESHOLD_BYTES = 64 * 1024 * 1024
 
+# Tamaño máximo declarado de una entrada 7z que se extrae a memoria.
+MAX_7Z_ENTRY_BYTES = 4 * 1024 * 1024 * 1024
+
 
 def _should_stream(platform: Platform, size: int) -> bool:
     return platform_spec(platform).hash_mode not in HEADER_HASH_MODES and size >= STREAM_THRESHOLD_BYTES
@@ -180,14 +183,25 @@ def _scan_zip(path: Path, platform: Platform, rom_extensions: set[str], dat_inde
     return roms
 
 
-def _scan_7z(path: Path, platform: Platform, rom_extensions: set[str], dat_index: DatIndex | None, cache: ScanHashCache | None) -> list[ScannedRom] | None:
-    """Devuelve las ROMs del 7z, o None si no contiene ninguna entrada soportada."""
+def _scan_7z(path: Path, platform: Platform, rom_extensions: set[str], dat_index: DatIndex | None, cache: ScanHashCache | None) -> tuple[list[ScannedRom], list[str]] | None:
+    """Devuelve (ROMs, entradas omitidas) del 7z, o None si no contiene ninguna entrada soportada."""
     stat = path.stat()
     roms: list[ScannedRom] = []
+    skipped: list[str] = []
     with py7zr.SevenZipFile(path) as archive:
-        entries = [info for info in archive.list() if not info.is_directory and Path(info.filename).suffix.lower() in rom_extensions]
-        if not entries:
+        all_entries = [info for info in archive.list() if not info.is_directory and Path(info.filename).suffix.lower() in rom_extensions]
+        if not all_entries:
             return None
+        # La extracción 7z es en memoria: un tamaño declarado desmesurado
+        # (archivo-bomba o imagen gigante) se omite en vez de agotar la RAM.
+        entries = []
+        for info in all_entries:
+            if info.uncompressed > MAX_7Z_ENTRY_BYTES:
+                skipped.append(f"{path} / {info.filename} (entrada de {info.uncompressed / (1024**3):.1f} GiB supera el límite de extracción 7z)")
+            else:
+                entries.append(info)
+        if not entries:
+            return roms, skipped
         pending = []
         cached_hashes: dict[str, RomHash] = {}
         for info in entries:
@@ -219,7 +233,7 @@ def _scan_7z(path: Path, platform: Platform, rom_extensions: set[str], dat_index
                 cache.put(str(path), info.filename, platform, info.uncompressed, stat.st_mtime_ns, hashes)
             rom = _scan_payload(data=data, hashes=hashes, source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
         roms.append(rom)
-    return roms
+    return roms, skipped
 
 
 def _scan_one_path(
@@ -242,8 +256,8 @@ def _scan_one_path(
             roms = _scan_zip(path, platform, rom_extensions, dat_index, cache)
             return (roms, []) if roms is not None else ([], [str(path)])
         if suffix == ".7z":
-            roms = _scan_7z(path, platform, rom_extensions, dat_index, cache)
-            return (roms, []) if roms is not None else ([], [str(path)])
+            outcome = _scan_7z(path, platform, rom_extensions, dat_index, cache)
+            return outcome if outcome is not None else ([], [str(path)])
         return [], [str(path)]
     except (OSError, zipfile.BadZipFile, py7zr.Bad7zFile):
         return [], [str(path)]

@@ -38,3 +38,15 @@ def test_scan_marks_corrupt_7z_as_unmatched(tmp_path: Path) -> None:
     scan = scan_directory(tmp_path, Platform.NES)
     assert scan.roms == []
     assert len(scan.unmatched_files) == 1
+
+
+def test_scan_skips_oversized_7z_entries(tmp_path: Path, monkeypatch) -> None:
+    from retroperfect import scanner
+
+    monkeypatch.setattr(scanner, "MAX_7Z_ENTRY_BYTES", 4)
+    _make_7z(tmp_path / "Pack (USA).7z", {"Pequeno (USA).nes": b"OK", "Enorme (USA).nes": b"X" * 100})
+    scan = scanner.scan_directory(tmp_path, Platform.NES)
+    assert len(scan.roms) == 1
+    assert scan.roms[0].inner_path == "Pequeno (USA).nes"
+    assert len(scan.unmatched_files) == 1
+    assert "límite de extracción" in scan.unmatched_files[0]
