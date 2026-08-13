@@ -6,27 +6,43 @@ from pathlib import Path
 from typing import Callable
 
 from .dat import DatIndex
-from .hashing import hash_bytes
+from .hashing import hash_bytes, hash_stream
 from .metadata import parse_no_intro_name
-from .models import Platform, ScanResult, ScannedRom
+from .models import Platform, RomHash, ScanResult, ScannedRom
 from .platforms import platform_spec
 
 
 ProgressCallback = Callable[[dict[str, object]], None]
 
+# Above this size, hash_mode 'direct' files (discs, CHDs...) are hashed in
+# streaming instead of loading the whole file in memory. Header-aware modes
+# (nes/snes/n64) always need the full data, but those files are small.
+STREAM_THRESHOLD_BYTES = 64 * 1024 * 1024
+
+
+def _should_stream(platform: Platform, size: int) -> bool:
+    return platform_spec(platform).hash_mode == "direct" and size >= STREAM_THRESHOLD_BYTES
+
 
 def _scan_payload(
     *,
-    data: bytes,
     source_path: Path,
     container_path: Path,
     inner_path: str | None,
     platform: Platform,
     dat_index: DatIndex | None,
+    data: bytes | None = None,
+    hashes: RomHash | None = None,
 ) -> ScannedRom:
-    hashes = hash_bytes(data, platform)
+    if hashes is None:
+        hashes = hash_bytes(data or b"", platform)
     display_filename = inner_path or source_path.name
-    dat_game = dat_index.match_data(data, hashes, filename=display_filename) if dat_index else None
+    if dat_index is None:
+        dat_game = None
+    elif data is not None:
+        dat_game = dat_index.match_data(data, hashes, filename=display_filename)
+    else:
+        dat_game = dat_index.match_any(hashes)
     display_name = dat_game.roms[0].name if dat_game and dat_game.roms else display_filename
     metadata = parse_no_intro_name(display_name)
     return ScannedRom(
@@ -41,14 +57,20 @@ def _scan_payload(
     )
 
 
+def _hash_file(path: Path, platform: Platform) -> RomHash:
+    if _should_stream(platform, path.stat().st_size):
+        with path.open("rb") as fh:
+            return hash_stream(fh)
+    return hash_bytes(path.read_bytes(), platform)
+
+
 def _scan_arcade_container(
     *,
     path: Path,
     platform: Platform,
     dat_index: DatIndex | None,
 ) -> ScannedRom:
-    data = path.read_bytes()
-    hashes = hash_bytes(data, platform)
+    hashes = _hash_file(path, platform)
     set_name = path.parent.name if path.suffix.lower() == ".chd" else path.stem
     dat_game = dat_index.match_set(set_name) if dat_index else None
     display_name = (dat_game.description or dat_game.name) if dat_game else path.name
@@ -91,7 +113,11 @@ def scan_directory(
                 result.roms.append(rom)
                 seen_containers.add(str(path))
             elif path.suffix.lower() in supported_rom_extensions:
-                rom = _scan_payload(data=path.read_bytes(), source_path=path, container_path=path, inner_path=None, platform=platform, dat_index=dat_index)
+                if _should_stream(platform, path.stat().st_size):
+                    with path.open("rb") as fh:
+                        rom = _scan_payload(hashes=hash_stream(fh), source_path=path, container_path=path, inner_path=None, platform=platform, dat_index=dat_index)
+                else:
+                    rom = _scan_payload(data=path.read_bytes(), source_path=path, container_path=path, inner_path=None, platform=platform, dat_index=dat_index)
                 result.roms.append(rom)
                 seen_containers.add(str(path))
             elif path.suffix.lower() == ".zip":
@@ -101,8 +127,11 @@ def scan_directory(
                         result.unmatched_files.append(str(path))
                         continue
                     for info in rom_entries:
-                        data = archive.read(info)
-                        rom = _scan_payload(data=data, source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
+                        if _should_stream(platform, info.file_size):
+                            with archive.open(info) as fh:
+                                rom = _scan_payload(hashes=hash_stream(fh), source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
+                        else:
+                            rom = _scan_payload(data=archive.read(info), source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
                         result.roms.append(rom)
                         seen_containers.add(str(path))
             else:

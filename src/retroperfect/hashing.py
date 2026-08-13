@@ -9,6 +9,34 @@ from .platforms import platform_spec
 
 INES_HEADER_SIZE = 16
 SNES_COPIER_HEADER_SIZE = 512
+HASH_CHUNK_SIZE = 1024 * 1024
+
+
+def hash_stream(fh) -> RomHash:
+    """Hash a binary stream in chunks; only valid when payload == data (hash_mode 'direct')."""
+    crc = 0
+    md5 = hashlib.md5()
+    sha1 = hashlib.sha1()
+    size = 0
+    while chunk := fh.read(HASH_CHUNK_SIZE):
+        crc = binascii.crc32(chunk, crc)
+        md5.update(chunk)
+        sha1.update(chunk)
+        size += len(chunk)
+    crc_hex = f"{crc & 0xFFFFFFFF:08x}"
+    md5_hex = md5.hexdigest()
+    sha1_hex = sha1.hexdigest()
+    return RomHash(
+        crc32=crc_hex,
+        md5=md5_hex,
+        sha1=sha1_hex,
+        size=size,
+        ra_hash=md5_hex,
+        payload_crc32=crc_hex,
+        payload_md5=md5_hex,
+        payload_sha1=sha1_hex,
+        payload_size=size,
+    )
 
 
 def hash_bytes(data: bytes, platform: Platform = Platform.NES) -> RomHash:

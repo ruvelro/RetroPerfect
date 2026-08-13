@@ -34,3 +34,33 @@ def test_parse_no_intro_v_revision_without_space() -> None:
     metadata = parse_no_intro_name("Family BASIC (Japan) (v2.1).nes")
     assert metadata.version == "2.1"
     assert metadata.revision == 1
+
+
+def test_hash_stream_matches_in_memory_hashing() -> None:
+    import io
+
+    from retroperfect.hashing import hash_bytes, hash_stream
+    from retroperfect.models import Platform
+
+    data = bytes(range(256)) * 5000
+    streamed = hash_stream(io.BytesIO(data))
+    in_memory = hash_bytes(data, Platform.MD)
+    assert streamed == in_memory
+
+
+def test_scan_streams_large_direct_files(tmp_path, monkeypatch) -> None:
+    import zipfile
+
+    from retroperfect import scanner
+    from retroperfect.models import Platform
+
+    monkeypatch.setattr(scanner, "STREAM_THRESHOLD_BYTES", 1)
+    payload = b"SEGA" * 100
+    (tmp_path / "Game (Europe).md").write_bytes(payload)
+    with zipfile.ZipFile(tmp_path / "Game (USA).zip", "w") as archive:
+        archive.writestr("Game (USA).md", payload)
+    scan = scanner.scan_directory(tmp_path, Platform.MD)
+    assert len(scan.roms) == 2
+    for rom in scan.roms:
+        assert rom.hashes.size == len(payload)
+        assert rom.hashes.md5 == rom.hashes.payload_md5
