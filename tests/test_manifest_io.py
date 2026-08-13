@@ -68,3 +68,19 @@ def test_apply_delete_manifest_removes_only_planned_sources(tmp_path: Path) -> N
     apply_manifest(manifest, confirm=True)
     assert keep.exists()
     assert not drop.exists()
+
+
+def test_save_scan_prunes_old_history(tmp_path: Path) -> None:
+    import os
+
+    from retroperfect.models import ScanResult
+    from retroperfect.storage import save_scan
+
+    for index in range(5):
+        scan = ScanResult(id=f"scan-{index}", platform=Platform.NES, input_path=".")
+        path = save_scan(scan, state_dir=tmp_path, keep=3)
+        stamp = 1_000_000 + index
+        os.utime(path, (stamp, stamp))
+    scans_dir = tmp_path / "scans"
+    names = sorted(item.name for item in scans_dir.glob("*.json"))
+    assert names == ["latest.json", "scan-2.json", "scan-3.json", "scan-4.json"]
