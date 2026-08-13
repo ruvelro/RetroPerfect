@@ -190,14 +190,16 @@ def suggest_dat_for_source(source: Path | None, platform: Platform = Platform.NE
 
 
 def detect_dat_format(path: Path) -> str:
-    prefix = path.read_text(encoding="utf-8", errors="replace")[:256].lstrip()
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        prefix = fh.read(256).lstrip()
     if prefix.startswith("<") or prefix.startswith("<?xml"):
         return "LogiqX XML"
     return "clrmamepro"
 
 
 def detect_header_mode(path: Path) -> str:
-    text = path.read_text(encoding="utf-8", errors="replace")[:20000].lower()
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        text = fh.read(20000).lower()
     name = path.name.lower()
     if "unheadered" in name or "unheadered" in text:
         return "unheadered"

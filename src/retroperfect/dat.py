@@ -90,7 +90,8 @@ def parse_clrmamepro_dat(path: Path) -> DatCatalog:
 
 
 def parse_dat(path: Path) -> DatCatalog:
-    prefix = path.read_text(encoding="utf-8", errors="replace")[:256].lstrip()
+    with path.open(encoding="utf-8", errors="replace") as fh:
+        prefix = fh.read(256).lstrip()
     if prefix.startswith("<") or prefix.startswith("<?xml"):
         return parse_logiqx_dat(path)
     return parse_clrmamepro_dat(path)
