@@ -143,3 +143,40 @@ def test_scanner_sets_disc_ra_hash(tmp_path: Path) -> None:
     assert again.roms[0].hashes.ra_hash == expected
     # el crc del archivo completo sigue siendo el del contenido íntegro
     assert again.roms[0].hashes.crc32 == f"{binascii.crc32(image) & 0xFFFFFFFF:08x}"
+
+
+def test_dreamcast_ra_hash_from_gdi(tmp_path: Path) -> None:
+    from retroperfect.disc import GDI_HIGH_DENSITY_LBA, dreamcast_ra_md5
+
+    base = GDI_HIGH_DENSITY_LBA
+    boot = b"binario-de-arranque-dreamcast" * 30
+    ip_bin = bytearray(SECTOR)
+    ip_bin[0:16] = b"SEGA SEGAKATANA "
+    ip_bin[16:32] = b"SEGA ENTERPRISES"
+    ip_bin[0x60:0x70] = b"1ST_READ.BIN".ljust(16)
+    root = _sector_pad(_dir_record(b"1ST_READ.BIN;1", base + 21, len(boot)))
+    sectors = {
+        0: bytes(ip_bin),
+        16: _pvd(base + 20, SECTOR),
+        20: root,
+    }
+    track = bytearray(_build_iso(sectors, 26))
+    track[21 * SECTOR : 21 * SECTOR + len(boot)] = boot
+    (tmp_path / "track03.bin").write_bytes(bytes(track))
+    gdi = tmp_path / "Juego (Europe).gdi"
+    gdi.write_text(
+        f'3\n1 0 4 2352 "track01.bin" 0\n2 756 0 2352 "track02.raw" 0\n3 {base} 4 2048 "track03.bin" 0\n',
+        encoding="utf-8",
+    )
+    expected = hashlib.md5(bytes(ip_bin[:256]) + boot).hexdigest()
+    with DiscImage(gdi) as disc:
+        assert disc.base_lba == base
+        assert dreamcast_ra_md5(disc) == expected
+    assert disc_ra_md5(gdi, "dreamcast") == expected
+
+
+def test_dreamcast_gdi_rejects_non_katana_track(tmp_path: Path) -> None:
+    (tmp_path / "track03.bin").write_bytes(bytes(SECTOR * 2))
+    gdi = tmp_path / "otro.gdi"
+    gdi.write_text('1\n3 45000 4 2048 "track03.bin" 0\n', encoding="utf-8")
+    assert disc_ra_md5(gdi, "dreamcast") is None

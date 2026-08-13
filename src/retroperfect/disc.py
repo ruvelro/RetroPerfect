@@ -1,6 +1,7 @@
-"""Lector mínimo de imágenes de disco (ISO 2048 y BIN/CUE 2352) con ISO9660,
-suficiente para calcular los hashes de RetroAchievements de PSX, Sega CD/Saturn y PSP.
-CHD, GDI multipista y CDI no están soportados todavía."""
+"""Lector mínimo de imágenes de disco (ISO 2048, BIN/CUE 2352 y GDI multipista)
+con ISO9660, suficiente para calcular los hashes de RetroAchievements de PSX,
+Sega CD/Saturn, PSP y Dreamcast. CHD y CDI no están soportados (no existe
+binding Python mantenido de libchdr y el formato DiscJuggler es propietario)."""
 from __future__ import annotations
 
 import hashlib
@@ -17,12 +18,19 @@ class DiscError(Exception):
 
 
 class DiscImage:
-    """Acceso por sectores de datos (2048 bytes de usuario) sobre .iso, .bin o .cue."""
+    """Acceso por sectores de datos (2048 bytes de usuario) sobre .iso, .bin, .cue o .gdi.
 
-    def __init__(self, path: Path):
+    base_lba es el LBA absoluto donde empieza la pista de datos: 0 en CD/ISO
+    normales y 45000 en la sesión de alta densidad de un GDI de Dreamcast.
+    Los métodos de sector aceptan LBAs absolutos del disco."""
+
+    def __init__(self, path: Path, base_lba: int = 0):
         if path.suffix.lower() == ".cue":
             path = _data_file_from_cue(path)
+        elif path.suffix.lower() == ".gdi":
+            path, base_lba = _data_track_from_gdi(path)
         self.path = path
+        self.base_lba = base_lba
         self.handle = path.open("rb")
         self.sector_size, self.user_offset = self._detect_layout()
 
@@ -49,7 +57,10 @@ class DiscImage:
             raise DiscError(f"Modo de sector raw no soportado: {mode}")
         return SECTOR_USER_SIZE, 0
 
-    def read_user_sector(self, index: int) -> bytes:
+    def read_user_sector(self, lba: int) -> bytes:
+        index = lba - self.base_lba
+        if index < 0:
+            raise DiscError(f"LBA {lba} anterior al inicio de la pista ({self.base_lba}).")
         self.handle.seek(index * self.sector_size + self.user_offset)
         return self.handle.read(SECTOR_USER_SIZE)
 
@@ -69,7 +80,7 @@ class DiscImage:
     # --- ISO9660 ---
 
     def root_directory(self) -> tuple[int, int]:
-        pvd = self.read_user_sector(16)
+        pvd = self.read_user_sector(self.base_lba + 16)
         if len(pvd) < 190 or pvd[1:6] != b"CD001":
             raise DiscError("No se encontró el descriptor de volumen ISO9660.")
         record = pvd[156 : 156 + 34]
@@ -129,6 +140,43 @@ def _data_file_from_cue(cue_path: Path) -> Path:
     return candidate
 
 
+GDI_HIGH_DENSITY_LBA = 45000
+
+
+def _data_track_from_gdi(gdi_path: Path) -> tuple[Path, int]:
+    """Devuelve (archivo, LBA) de la pista de datos de alta densidad de un GDI."""
+    lines = [line.strip() for line in gdi_path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+    if not lines:
+        raise DiscError("GDI vacío.")
+    data_tracks: list[tuple[int, Path]] = []
+    for line in lines[1:]:
+        match = re.match(r'(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+"?([^"]+?)"?\s+(-?\d+)$', line)
+        if not match:
+            continue
+        _track, lba, track_type, _sector_size, filename, _offset = match.groups()
+        if int(track_type) == 4:  # pista de datos
+            data_tracks.append((int(lba), gdi_path.parent / filename))
+    if not data_tracks:
+        raise DiscError("El GDI no declara ninguna pista de datos.")
+    high_density = [item for item in data_tracks if item[0] >= GDI_HIGH_DENSITY_LBA]
+    lba, path = high_density[0] if high_density else data_tracks[-1]
+    if not path.exists():
+        raise DiscError(f"El GDI apunta a {path.name}, que no existe.")
+    return path, lba
+
+
+def dreamcast_ra_md5(disc: DiscImage) -> str:
+    """rcheevos: MD5 de los primeros 256 bytes de IP.BIN + el binario de arranque que declara."""
+    ip_bin = disc.read_user_sector(disc.base_lba)
+    if not ip_bin.startswith(b"SEGA SEGAKATANA"):
+        raise DiscError("La pista de datos no empieza por SEGA SEGAKATANA; no parece un GDI de Dreamcast.")
+    digest = hashlib.md5()
+    digest.update(ip_bin[:256])
+    boot_name = ip_bin[0x60:0x70].decode("ascii", errors="replace").strip()
+    digest.update(disc.read_file(boot_name))
+    return digest.hexdigest()
+
+
 def psx_ra_md5(disc: DiscImage) -> str:
     """rcheevos: MD5 del nombre del ejecutable (según SYSTEM.CNF) + su contenido."""
     exe_name = "PSX.EXE"
@@ -163,8 +211,8 @@ def psp_ra_md5(disc: DiscImage) -> str:
     return digest.hexdigest()
 
 
-DISC_RA_MODES = {"psx", "segacd", "psp"}
-DISC_RA_SUFFIXES = {".cue", ".iso", ".bin"}
+DISC_RA_MODES = {"psx", "segacd", "psp", "dreamcast"}
+DISC_RA_SUFFIXES = {".cue", ".iso", ".bin", ".gdi"}
 
 
 def disc_ra_md5(path: Path, hash_mode: str) -> str | None:
@@ -177,6 +225,8 @@ def disc_ra_md5(path: Path, hash_mode: str) -> str | None:
                 return psx_ra_md5(disc)
             if hash_mode == "segacd":
                 return segacd_ra_md5(disc)
+            if hash_mode == "dreamcast":
+                return dreamcast_ra_md5(disc)
             return psp_ra_md5(disc)
     except (OSError, DiscError):
         return None
