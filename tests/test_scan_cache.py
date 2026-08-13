@@ -97,3 +97,21 @@ def test_scan_cache_preserves_headered_dat_fallback(tmp_path: Path, monkeypatch)
     second = scanner.scan_directory(roms_dir, Platform.NES, dat_index=index, hash_cache=cache)
     assert calls["count"] == 0
     assert second.roms[0].dat_game is not None
+
+
+def test_parallel_scan_matches_sequential_results(tmp_path: Path) -> None:
+    for index in range(12):
+        (tmp_path / f"Game {index} (Europe).nes").write_bytes(f"payload-{index}".encode())
+    with zipfile.ZipFile(tmp_path / "Pack (USA).zip", "w") as archive:
+        for index in range(4):
+            archive.writestr(f"Packed {index} (USA).nes", f"packed-{index}".encode())
+
+    sequential = scanner.scan_directory(tmp_path, Platform.NES, workers=1)
+    parallel = scanner.scan_directory(tmp_path, Platform.NES, workers=4)
+
+    def key(scan):
+        return sorted((rom.container_path, rom.inner_path or "", rom.hashes.md5) for rom in scan.roms)
+
+    assert key(sequential) == key(parallel)
+    assert len(parallel.roms) == 16
+    assert sequential.unmatched_files == parallel.unmatched_files

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import uuid
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from pathlib import Path
 
@@ -247,6 +249,7 @@ def scan_directory(
     dat_path: Path | None = None,
     progress: ProgressCallback | None = None,
     hash_cache: Path | None = None,
+    workers: int | None = None,
 ) -> ScanResult:
     result = ScanResult(id=str(uuid.uuid4()), platform=platform, input_path=str(input_path), dat_path=str(dat_path) if dat_path else None)
     spec = platform_spec(platform)
@@ -257,19 +260,34 @@ def scan_directory(
     paths = [path for path in all_paths if path.is_file() and (path.suffix.lower() in supported_extensions or path.suffix.lower() in CONTAINER_SUFFIXES)]
     total = len(paths)
     cache = ScanHashCache(hash_cache) if hash_cache else None
+    if workers is None:
+        workers = min(8, os.cpu_count() or 1)
     if progress:
         progress({"phase": "start", "current": 0, "total": total, "path": "", "roms": 0, "matched": 0})
 
+    def scan_one(path: Path) -> tuple[list[ScannedRom], list[str]]:
+        return _scan_one_path(
+            path,
+            platform,
+            arcade_mode=arcade_mode,
+            rom_extensions=supported_rom_extensions,
+            dat_index=dat_index,
+            cache=cache,
+        )
+
+    def results_in_order() -> Iterator[tuple[Path, tuple[list[ScannedRom], list[str]]]]:
+        # hashlib y zlib liberan el GIL, así que los hilos hashean en paralelo de verdad.
+        if workers > 1 and len(paths) > 1:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(scan_one, path) for path in paths]
+                for path, future in zip(paths, futures, strict=True):
+                    yield path, future.result()
+        else:
+            for path in paths:
+                yield path, scan_one(path)
+
     try:
-        for index, path in enumerate(paths, start=1):
-            roms, unmatched = _scan_one_path(
-                path,
-                platform,
-                arcade_mode=arcade_mode,
-                rom_extensions=supported_rom_extensions,
-                dat_index=dat_index,
-                cache=cache,
-            )
+        for index, (path, (roms, unmatched)) in enumerate(results_in_order(), start=1):
             result.roms.extend(roms)
             result.unmatched_files.extend(unmatched)
             if progress:

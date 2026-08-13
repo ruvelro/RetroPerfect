@@ -39,6 +39,7 @@ def scan(
     dat: Annotated[Path | None, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
     annotate_ra: Annotated[bool, typer.Option("--annotate-ra/--no-annotate-ra")] = True,
     hash_cache: Annotated[bool, typer.Option("--hash-cache/--no-hash-cache", help="Reutiliza hashes de escaneos anteriores si el archivo no cambió.")] = True,
+    workers: Annotated[int | None, typer.Option("--workers", min=1, help="Hilos de hashing en paralelo (por defecto, hasta 8 según CPUs).")] = None,
 ) -> None:
     """Escanea ROMs sueltas y contenedores ZIP/7z de una plataforma."""
     parsed_platform = _platform(platform)
@@ -48,7 +49,7 @@ def scan(
         dat_path = Path(imported[0].path)
     dat_index = DatIndex(parse_dat(dat_path)) if dat_path else None
     cache_path = project_state_dir() / "scan-cache.sqlite3" if hash_cache else None
-    result = scan_directory(input, parsed_platform, dat_index=dat_index, dat_path=dat_path, hash_cache=cache_path)
+    result = scan_directory(input, parsed_platform, dat_index=dat_index, dat_path=dat_path, hash_cache=cache_path, workers=workers)
     if annotate_ra:
         result = annotate_scan_with_ra(result)
     path = save_scan(result)
