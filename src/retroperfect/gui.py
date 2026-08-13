@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import webbrowser
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import Any
 
 from nicegui import app, ui
 from pydantic import ValidationError
 
-from .coverage import build_coverage
+from .coverage import CoverageSummary, build_coverage
 from .dat import DatIndex, parse_dat
 from .dat_manager import compare_dats, download_and_import_source, download_and_import_url, import_dat_file, suggest_dat_for_source, validate_setup
 from .dat_sources import DAT_SOURCES, list_dat_sources
@@ -49,7 +51,7 @@ from .gui_rows import (
     _unmatched_rows,
 )
 from .manifest_io import apply_manifest, preflight_manifest, report_manifest, save_manifest
-from .models import ActionMode, ExportLayout, OutputBucket, Platform, ProfileOutput, SelectionProfile
+from .models import ActionMode, DatCatalog, ExportLayout, Manifest, OutputBucket, Platform, ProfileOutput, ScanResult, SelectionProfile
 from .paths import project_state_dir
 from .platforms import list_platforms, platform_options, platform_spec
 from .profile import DEFAULT_PROFILE, list_recommended_profiles, load_profile, save_named_profile
@@ -58,27 +60,31 @@ from .rules import build_manifest, explain_score
 from .scanner import scan_directory
 from .storage import save_scan
 
+
 # Estado global de la aplicación: RetroPerfect es una herramienta local
 # mono-usuario; todas las pestañas del navegador comparten este estado.
-state: dict[str, object] = {
-    "platform": Platform.NES,
-    "scan": None,
-    "manifest": None,
-    "profile": DEFAULT_PROFILE.model_copy(deep=True),
-    "catalog": None,
-    "coverage": None,
-    "overrides": {"main": {}, "ra": {}},
-    "setup_ready": False,
-    "suppress_setup_dirty": False,
-    "scan_progress": {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "idle"},
-    "ra_details_progress": {"current": 0, "total": 0, "updated": 0, "running": False},
-    "dark_mode": False,
-    "activity": [],
-}
+@dataclass
+class AppState:
+    platform: Platform = Platform.NES
+    scan: ScanResult | None = None
+    manifest: Manifest | None = None
+    profile: SelectionProfile = field(default_factory=lambda: DEFAULT_PROFILE.model_copy(deep=True))
+    catalog: DatCatalog | None = None
+    coverage: CoverageSummary | None = None
+    overrides: dict[str, dict[str, str]] = field(default_factory=lambda: {"main": {}, "ra": {}})
+    setup_ready: bool = False
+    suppress_setup_dirty: bool = False
+    scan_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "idle"})
+    ra_details_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "updated": 0, "running": False})
+    dark_mode: bool = False
+    activity: list[dict[str, str]] = field(default_factory=list)
+
+
+state = AppState()
 
 
 def _current_platform() -> Platform:
-    return Platform(state.get("platform", Platform.NES))
+    return Platform(state.platform)
 
 
 def _small_button(label: str, icon: str, on_click) -> ui.button:
@@ -86,7 +92,7 @@ def _small_button(label: str, icon: str, on_click) -> ui.button:
 
 
 def _log_activity(message: str, level: str = "INFO") -> None:
-    rows = list(cast(list[dict[str, str]], state.get("activity") or []))
+    rows = list(state.activity)
     rows.insert(
         0,
         {
@@ -95,11 +101,11 @@ def _log_activity(message: str, level: str = "INFO") -> None:
             "message": message,
         },
     )
-    state["activity"] = rows[:200]
+    state.activity = rows[:200]
 
 
 def _activity_rows() -> list[dict[str, str]]:
-    return list(cast(list[dict[str, str]], state.get("activity") or []))
+    return list(state.activity)
 
 
 def _open_path(path: Path | str | None) -> None:
@@ -122,7 +128,7 @@ def _profile_comparison_rows(scan, output_dir: str | None) -> list[dict[str, str
                 [output.bucket for output in profile.outputs],
                 output_dir=Path(output_dir) if output_dir else None,
                 action=ActionMode.COPY,
-                overrides=state["overrides"],  # type: ignore[arg-type]
+                overrides=state.overrides,  # type: ignore[arg-type]
             )
         except Exception as exc:
             rows.append({"profile": name, "main": 0, "ra": 0, "total": 0, "drops": 0, "note": f"Error: {exc}"})
@@ -264,7 +270,7 @@ def _group_rows(scan) -> list[dict[str, str | int]]:
     for rom in scan.roms:
         grouped.setdefault(_rom_summary_key(rom), []).append(rom)
     rows = []
-    overrides = state["overrides"]
+    overrides = state.overrides
     for key, roms in sorted(grouped.items(), key=lambda item: item[0].lower()):
         main_id = overrides.get("main", {}).get(key)  # type: ignore[union-attr]
         ra_id = overrides.get("ra", {}).get(key)  # type: ignore[union-attr]
@@ -289,8 +295,8 @@ def _variant_rows(scan, group_key: str, profile: SelectionProfile) -> list[dict[
         return []
     roms = [rom for rom in scan.roms if _rom_summary_key(rom) == group_key]
     main_output = next((output for output in profile.outputs if output.bucket == OutputBucket.MAIN), ProfileOutput(bucket=OutputBucket.MAIN))
-    main_override = state["overrides"].get("main", {}).get(group_key)  # type: ignore[union-attr]
-    ra_override = state["overrides"].get("ra", {}).get(group_key)  # type: ignore[union-attr]
+    main_override = state.overrides.get("main", {}).get(group_key)  # type: ignore[union-attr]
+    ra_override = state.overrides.get("ra", {}).get(group_key)  # type: ignore[union-attr]
     return [
         {
             "id": rom.id,
@@ -502,21 +508,21 @@ def build_ui() -> None:
         }
         """
     )
-    summary_actions: dict[str, object] = {}
+    summary_actions: dict[str, Callable[[], Awaitable[None]]] = {}
 
     async def run_summary_plan_click() -> None:
         action = summary_actions.get("plan")
         if action is None:
             ui.notify("El plan aun no esta listo en la interfaz.", color="warning")
             return
-        await action()  # type: ignore[misc]
+        await action()
 
     async def run_summary_apply_click() -> None:
         action = summary_actions.get("apply")
         if action is None:
             ui.notify("El aplicador aun no esta listo en la interfaz.", color="warning")
             return
-        await action()  # type: ignore[misc]
+        await action()
 
     with ui.header().classes("rp-header items-center bg-primary text-white px-4 py-2"):
         with ui.column().classes("gap-0 min-w-64"):
@@ -535,8 +541,8 @@ def build_ui() -> None:
             theme_button = ui.button("Oscuro", icon="dark_mode").props("dense flat").classes("rp-theme-button")
 
             def toggle_theme() -> None:
-                enabled = not bool(state.get("dark_mode"))
-                state["dark_mode"] = enabled
+                enabled = not bool(state.dark_mode)
+                state.dark_mode = enabled
                 dark_mode.set_value(enabled)
                 theme_button.text = "Claro" if enabled else "Oscuro"
                 theme_button.props(f"icon={'light_mode' if enabled else 'dark_mode'}")
@@ -571,12 +577,12 @@ def build_ui() -> None:
                     ui.image(spec.icon_url).classes("rp-platform-icon")
                 else:
                     ui.icon(spec.icon).classes("text-3xl")
-            header_source_badge.color = "green" if has_control_value("source") else "grey"
-            header_dat_badge.color = "green" if has_control_value("dat") else "grey"
+            header_source_badge.props(f"color={'green' if has_control_value('source') else 'grey'}")
+            header_dat_badge.props(f"color={'green' if has_control_value('dat') else 'grey'}")
             header_ra_badge.text = "RA" if spec.ra_active else spec.ra_label
-            header_ra_badge.color = "green" if ra_cache_count(_current_platform()) else ("blue-grey" if spec.supports_ra else "grey")
-            header_plan_badge.color = "green" if state.get("manifest") else "grey"
-            header_output_badge.color = "green" if has_control_value("outdir") else "grey"
+            header_ra_badge.props(f"color={'green' if ra_cache_count(_current_platform()) else ('blue-grey' if spec.supports_ra else 'grey')}")
+            header_plan_badge.props(f"color={'green' if state.manifest else 'grey'}")
+            header_output_badge.props(f"color={'green' if has_control_value('outdir') else 'grey'}")
 
         def _set_tab_enabled(tab, enabled: bool) -> None:
             if enabled:
@@ -587,9 +593,9 @@ def build_ui() -> None:
                 tab.classes("opacity-50")
 
         def update_tab_access() -> None:
-            setup_ready = bool(state.get("setup_ready"))
-            has_scan = state.get("scan") is not None
-            has_manifest = state.get("manifest") is not None
+            setup_ready = bool(state.setup_ready)
+            has_scan = state.scan is not None
+            has_manifest = state.manifest is not None
             _set_tab_enabled(profile_tab, setup_ready)
             _set_tab_enabled(scan_tab, setup_ready)
             _set_tab_enabled(decisions_tab, setup_ready and has_scan)
@@ -597,14 +603,14 @@ def build_ui() -> None:
             _set_tab_enabled(summary_tab, setup_ready and has_scan and has_manifest)
 
         def set_setup_ready(ready: bool) -> None:
-            state["setup_ready"] = ready
+            state.setup_ready = ready
             update_tab_access()
             refresh_header_status()
 
         def mark_setup_dirty() -> None:
-            if state.get("suppress_setup_dirty"):
+            if state.suppress_setup_dirty:
                 return
-            if state.get("setup_ready"):
+            if state.setup_ready:
                 set_setup_ready(False)
             refresh_header_status()
 
@@ -612,12 +618,12 @@ def build_ui() -> None:
             new_platform = Platform(value)
             if new_platform == _current_platform():
                 return
-            state["platform"] = new_platform
-            state["scan"] = None
-            state["manifest"] = None
-            state["catalog"] = None
-            state["coverage"] = None
-            state["overrides"] = {"main": {}, "ra": {}}
+            state.platform = new_platform
+            state.scan = None
+            state.manifest = None
+            state.catalog = None
+            state.coverage = None
+            state.overrides = {"main": {}, "ra": {}}
             mark_setup_dirty()
             try:
                 spec = platform_spec(new_platform)
@@ -739,7 +745,7 @@ def build_ui() -> None:
                                 _current_platform(),
                                 Path(source.value) if "source" in header_refs and source.value else None,
                                 Path(dat.value) if "dat" in header_refs and dat.value else None,
-                                state.get("scan"),  # type: ignore[arg-type]
+                                state.scan,  # type: ignore[arg-type]
                             )
                         )
                         needed_table.update()
@@ -824,7 +830,7 @@ def build_ui() -> None:
                             try:
                                 path = _latest_project_path()
                                 payload = json.loads(path.read_text(encoding="utf-8"))
-                                state["suppress_setup_dirty"] = True
+                                state.suppress_setup_dirty = True
                                 platform_select.set_value(payload.get("platform", _current_platform().value))
                                 source.value = payload.get("source") or ""
                                 dat.value = payload.get("dat") or ""
@@ -833,7 +839,7 @@ def build_ui() -> None:
                                 profile_payload = payload.get("profile")
                                 if profile_payload and "profile_name" in controls:
                                     profile = SelectionProfile.model_validate(profile_payload)
-                                    state["profile"] = profile
+                                    state.profile = profile
                                     _apply_profile_to_controls(profile, controls)
                                 _log_activity(f"Sesión cargada: {path}", "OK")
                                 refresh_needed_table()
@@ -842,7 +848,7 @@ def build_ui() -> None:
                             except Exception as exc:
                                 _log_activity(f"No se pudo cargar sesión: {exc}", "WARN")
                             finally:
-                                state["suppress_setup_dirty"] = False
+                                state.suppress_setup_dirty = False
                         with ui.row().classes("items-center"):
                             ui.button("Guardar sesión", icon="save", on_click=save_project_click).props("outline")
                             ui.button("Cargar sesión", icon="folder_open", on_click=load_project_click).props("outline")
@@ -934,10 +940,10 @@ def build_ui() -> None:
                     async def sync_ra_details_click() -> None:
                         try:
                             platform = _current_platform()
-                            state["ra_details_progress"] = {"current": 0, "total": int(details_limit.value or 150), "updated": 0, "running": True}
+                            state.ra_details_progress = {"current": 0, "total": int(details_limit.value or 150), "updated": 0, "running": True}
                             ra_status.text = "Sincronizando detalles RA: labels, nombres de hash y PatchUrl..."
                             def progress_update(update: dict[str, int]) -> None:
-                                state["ra_details_progress"] = {**update, "running": True}
+                                state.ra_details_progress = {**update, "running": True}
 
                             count = await asyncio.to_thread(
                                 sync_ra_patch_details,
@@ -950,20 +956,20 @@ def build_ui() -> None:
                                 progress_update,
                                 float(details_delay.value or 1.2),
                             )
-                            current_progress = state.get("ra_details_progress", {})
+                            current_progress = state.ra_details_progress
                             total = int(current_progress.get("total", 0) or 0)
-                            state["ra_details_progress"] = {"current": total, "total": total, "updated": count, "running": False}
-                            scan_result = state.get("scan")
+                            state.ra_details_progress = {"current": total, "total": total, "updated": count, "running": False}
+                            scan_result = state.scan
                             if scan_result is not None:
-                                state["scan"] = await asyncio.to_thread(annotate_scan_with_ra, scan_result)
+                                state.scan = await asyncio.to_thread(annotate_scan_with_ra, scan_result)
                             ra_status.text = f"Detalles RA actualizados: {count}. Puedes continuar luego; se priorizan pendientes. 🩹 indica hash con parche localizado."
                             _log_activity(f"Detalles RA actualizados para {platform_spec(platform).short_name}: {count}", "OK")
                             ra_cache_status.text = _ra_status_label(platform)
                             refresh_coverage()
                             refresh_decisions()
                         except Exception as exc:
-                            current = cast(dict[str, object], state.get("ra_details_progress") or {})
-                            state["ra_details_progress"] = {**current, "running": False}
+                            current = state.ra_details_progress
+                            state.ra_details_progress = {**current, "running": False}
                             ra_status.text = f"Error detalles RA: {exc}"
 
                     with ui.row().classes("items-center gap-2"):
@@ -983,7 +989,7 @@ def build_ui() -> None:
                         ui.button("Continuar pendientes RA", icon="done_all", on_click=complete_details_click).props("outline")
 
                     def refresh_ra_details_progress() -> None:
-                        progress = state.get("ra_details_progress", {})
+                        progress = state.ra_details_progress
                         current = int(progress.get("current", 0) or 0)
                         total = int(progress.get("total", 0) or 0)
                         updated = int(progress.get("updated", 0) or 0)
@@ -1240,7 +1246,7 @@ def build_ui() -> None:
 
                     def save_profile_click() -> None:
                         try:
-                            state["profile"] = _profile_from_controls(controls)
+                            state.profile = _profile_from_controls(controls)
                             profile_status.text = "Perfil actualizado."
                         except ValidationError as exc:
                             profile_status.text = f"Perfil inválido: {exc}"
@@ -1249,7 +1255,7 @@ def build_ui() -> None:
                         try:
                             profile = _profile_from_controls(controls)
                             path = save_named_profile(profile)
-                            state["profile"] = profile
+                            state.profile = profile
                             profile_select.options = _profile_options()
                             profile_select.value = str(path)
                             profile_select.update()
@@ -1261,7 +1267,7 @@ def build_ui() -> None:
                         try:
                             selected = profile_select.value
                             profile = load_profile("default" if selected == "default" else Path(selected))
-                            state["profile"] = profile
+                            state.profile = profile
                             _apply_profile_to_controls(profile, controls)
                             profile_status.text = f"Perfil cargado: {profile.name}"
                         except Exception as exc:
@@ -1270,7 +1276,7 @@ def build_ui() -> None:
                     def apply_recommended_profile_click() -> None:
                         try:
                             profile = list_recommended_profiles()[recommended_profile.value]
-                            state["profile"] = profile
+                            state.profile = profile
                             _apply_profile_to_controls(profile, controls)
                             profile_status.text = f"Perfil recomendado cargado: {profile.name}"
                         except Exception as exc:
@@ -1298,7 +1304,7 @@ def build_ui() -> None:
                     ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
 
                     def compare_profiles_click() -> None:
-                        profile_compare_table.rows = _profile_comparison_rows(state.get("scan"), outdir.value)
+                        profile_compare_table.rows = _profile_comparison_rows(state.scan, outdir.value)
                         profile_compare_table.update()
                         if not profile_compare_table.rows:
                             profile_status.text = "Escanea primero para comparar perfiles."
@@ -1391,23 +1397,23 @@ def build_ui() -> None:
                         scan_status.text = "Selecciona un origen antes de escanear."
                         return
                     try:
-                        state["scan_progress"] = {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "preparing"}
+                        state.scan_progress = {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "preparing"}
                         dat_path = Path(dat.value) if dat.value else None
                         if dat_path and dat_path.suffix.lower() == ".zip":
                             imported = await asyncio.to_thread(import_dat_file, dat_path)
                             dat_path = Path(imported[0].path)
                             try:
-                                state["suppress_setup_dirty"] = True
+                                state.suppress_setup_dirty = True
                                 dat.value = str(dat_path)
                             finally:
-                                state["suppress_setup_dirty"] = False
+                                state.suppress_setup_dirty = False
                         scan_status.text = "Cargando e indexando DAT..."
                         catalog = await asyncio.to_thread(parse_dat, dat_path) if dat_path else None
                         dat_index = await asyncio.to_thread(DatIndex, catalog) if catalog else None
                         scan_status.text = "Escaneando ZIPs/ROMs... en romsets grandes puede tardar unos minutos."
 
                         def progress_update(update: dict[str, object]) -> None:
-                            state["scan_progress"] = update
+                            state.scan_progress = update
 
                         result = await asyncio.to_thread(
                             scan_directory,
@@ -1420,9 +1426,9 @@ def build_ui() -> None:
                         )
                         result = await asyncio.to_thread(annotate_scan_with_ra, result)
                         save_scan(result)
-                        state["scan"] = result
-                        state["catalog"] = catalog
-                        state["coverage"] = build_coverage(result, catalog)
+                        state.scan = result
+                        state.catalog = catalog
+                        state.coverage = build_coverage(result, catalog)
                         update_tab_access()
                         scan_table.rows = [
                             {
@@ -1457,7 +1463,7 @@ def build_ui() -> None:
                                 _current_platform(),
                                 Path(source.value) if source.value else None,
                                 Path(dat.value) if dat.value else None,
-                                state.get("scan"),  # type: ignore[arg-type]
+                                state.scan,  # type: ignore[arg-type]
                             )
                         )
                         diagnostic_table.update()
@@ -1468,7 +1474,7 @@ def build_ui() -> None:
                     ui.button("Escanear colección", icon="search", on_click=scan_click).props("color=primary")
 
                 def refresh_scan_progress() -> None:
-                    progress = state.get("scan_progress", {})
+                    progress = state.scan_progress
                     current = int(progress.get("current", 0) or 0)
                     total = int(progress.get("total", 0) or 0)
                     roms = int(progress.get("roms", 0) or 0)
@@ -1635,7 +1641,7 @@ def build_ui() -> None:
                 )
 
                 def refresh_coverage() -> None:
-                    summary = state.get("coverage")
+                    summary = state.coverage
                     if summary is None:
                         coverage_table.rows = []
                         coverage_table.update()
@@ -1655,7 +1661,7 @@ def build_ui() -> None:
                         patch_queue_table.rows = []
                         patch_queue_table.update()
                         return
-                    audit = build_perfect_audit(summary, state.get("scan"), state.get("manifest"))  # type: ignore[arg-type]
+                    audit = build_perfect_audit(summary, state.scan, state.manifest)  # type: ignore[arg-type]
                     audit_score.text = f"Score: {audit.score}"
                     audit_verdict.text = audit.verdict
                     audit_complete.text = f"Completos: {audit.complete_games}"
@@ -1670,11 +1676,11 @@ def build_ui() -> None:
                             _current_platform(),
                             Path(source.value) if source.value else None,
                             Path(dat.value) if dat.value else None,
-                            state.get("scan"),  # type: ignore[arg-type]
+                            state.scan,  # type: ignore[arg-type]
                         )
                     )
                     dat_warning_table.update()
-                    patch_queue_table.rows = _patch_queue_rows(state.get("manifest"))
+                    patch_queue_table.rows = _patch_queue_rows(state.manifest)
                     patch_queue_table.update()
                     metric_dat.text = f"DAT: {summary.dat_games}"
                     metric_rom.text = f"Romset: {summary.romset_games}"
@@ -1686,9 +1692,9 @@ def build_ui() -> None:
                     metric_drop.text = f"Se pierden: {summary.will_drop_all_games}"
                     coverage_status.text = "Los titulos se validan al terminar el escaneo. Al crear el plan, los colores reflejan que se conserva o descarta."
                     if coverage_view.value == "variants":
-                        coverage_table.rows = _coverage_variant_rows(state.get("scan"), state.get("catalog"), state.get("manifest"), coverage_filter.value)
+                        coverage_table.rows = _coverage_variant_rows(state.scan, state.catalog, state.manifest, coverage_filter.value)
                     else:
-                        coverage_table.rows = _coverage_rows(summary, coverage_filter.value, state.get("scan"), state.get("manifest"))
+                        coverage_table.rows = _coverage_rows(summary, coverage_filter.value, state.scan, state.manifest)
                     coverage_table.update()
 
                 coverage_filter.on_value_change(lambda _: refresh_coverage())
@@ -1748,16 +1754,16 @@ def build_ui() -> None:
                     variants_table.add_slot("body-cell-priority", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
 
                 def refresh_decisions() -> None:
-                    groups_table.rows = _group_rows(state.get("scan"))
+                    groups_table.rows = _group_rows(state.scan)
                     groups_table.update()
                     if selected_group["key"]:
-                        variants_table.rows = _variant_rows(state.get("scan"), selected_group["key"], state["profile"])  # type: ignore[arg-type]
+                        variants_table.rows = _variant_rows(state.scan, selected_group["key"], state.profile)  # type: ignore[arg-type]
                         variants_table.update()
 
                 def select_group(event) -> None:
                     row = event.args[1] if isinstance(event.args, list) and len(event.args) > 1 else event.args
                     selected_group["key"] = row.get("group", "") if isinstance(row, dict) else ""
-                    variants_table.rows = _variant_rows(state.get("scan"), selected_group["key"], state["profile"])  # type: ignore[arg-type]
+                    variants_table.rows = _variant_rows(state.scan, selected_group["key"], state.profile)  # type: ignore[arg-type]
                     variants_table.update()
                     decision_status.text = f"Revisando: {row.get('title', selected_group['key']) if isinstance(row, dict) else selected_group['key']}"
 
@@ -1774,13 +1780,13 @@ def build_ui() -> None:
                     if not selected_group["key"] or not rom_id:
                         decision_status.text = "Selecciona un juego y una variante."
                         return
-                    state["overrides"].setdefault(bucket, {})[selected_group["key"]] = rom_id  # type: ignore[union-attr]
+                    state.overrides.setdefault(bucket, {})[selected_group["key"]] = rom_id  # type: ignore[union-attr]
                     decision_status.text = f"Override {bucket} aplicado."
                     refresh_decisions()
 
                 def clear_override(bucket: str) -> None:
                     if selected_group["key"]:
-                        state["overrides"].setdefault(bucket, {}).pop(selected_group["key"], None)  # type: ignore[union-attr]
+                        state.overrides.setdefault(bucket, {}).pop(selected_group["key"], None)  # type: ignore[union-attr]
                     decision_status.text = f"Override {bucket} eliminado."
                     refresh_decisions()
 
@@ -1863,7 +1869,7 @@ def build_ui() -> None:
                             ui.button("Cancelar", icon="close", on_click=safety_dialog.close).props("flat")
 
                             async def confirm_apply_click() -> None:
-                                manifest = state["manifest"]
+                                manifest = state.manifest
                                 if manifest is None:
                                     plan_status.text = "No hay manifiesto que aplicar."
                                     safety_dialog.close()
@@ -1879,24 +1885,24 @@ def build_ui() -> None:
                             ui.button("Aplicar manifiesto", icon="play_arrow", on_click=confirm_apply_click).props("color=secondary")
 
                     async def plan_click() -> None:
-                        scan_result = state["scan"]
+                        scan_result = state.scan
                         if scan_result is None:
                             plan_status.text = "Escanea una colección antes de crear el plan."
                             return
                         try:
-                            state["profile"] = _profile_from_controls(controls)
-                            profile = state["profile"]
+                            state.profile = _profile_from_controls(controls)
+                            profile = state.profile
                             manifest = build_manifest(
                                 scan_result,  # type: ignore[arg-type]
                                 profile,  # type: ignore[arg-type]
                                 [output.bucket for output in profile.outputs],  # type: ignore[attr-defined]
                                 output_dir=Path(outdir.value) if outdir.value else None,
                                 action=ActionMode(action.value),
-                                overrides=state["overrides"],  # type: ignore[arg-type]
+                                overrides=state.overrides,  # type: ignore[arg-type]
                             )
                             path = save_manifest(manifest, Path(".retroperfect/manifests/latest.json"))
-                            state["manifest"] = manifest
-                            state["coverage"] = build_coverage(scan_result, state.get("catalog"), manifest)  # type: ignore[arg-type]
+                            state.manifest = manifest
+                            state.coverage = build_coverage(scan_result, state.catalog, manifest)  # type: ignore[arg-type]
                             update_tab_access()
                             plan_table.rows = [
                                 {
@@ -1920,7 +1926,7 @@ def build_ui() -> None:
                             plan_status.text = f"Error creando plan: {exc}"
 
                     async def safe_plan_click() -> None:
-                        scan_result = state["scan"]
+                        scan_result = state.scan
                         if scan_result is None:
                             plan_status.text = "Escanea una colección antes de crear una prueba segura."
                             return
@@ -1932,19 +1938,19 @@ def build_ui() -> None:
                             if sample is None:
                                 plan_status.text = "No hay datos de escaneo para muestrear."
                                 return
-                            state["profile"] = _profile_from_controls(controls)
-                            profile = state["profile"]
+                            state.profile = _profile_from_controls(controls)
+                            profile = state.profile
                             manifest = build_manifest(
                                 sample,
                                 profile,  # type: ignore[arg-type]
                                 [output.bucket for output in profile.outputs],  # type: ignore[attr-defined]
                                 output_dir=Path(outdir.value) / "_prueba_segura",
                                 action=ActionMode.COPY,
-                                overrides=state["overrides"],  # type: ignore[arg-type]
+                                overrides=state.overrides,  # type: ignore[arg-type]
                             )
                             path = save_manifest(manifest, Path(".retroperfect/manifests/latest-safe-sample.json"))
-                            state["manifest"] = manifest
-                            state["coverage"] = build_coverage(scan_result, state.get("catalog"), manifest)  # type: ignore[arg-type]
+                            state.manifest = manifest
+                            state.coverage = build_coverage(scan_result, state.catalog, manifest)  # type: ignore[arg-type]
                             action.value = ActionMode.COPY.value
                             action.update()
                             plan_table.rows = [
@@ -1971,7 +1977,7 @@ def build_ui() -> None:
                             plan_status.text = f"Error creando prueba segura: {exc}"
 
                     async def apply_click() -> None:
-                        manifest = state["manifest"]
+                        manifest = state.manifest
                         if manifest is None:
                             plan_status.text = "No hay manifiesto que aplicar."
                             return
@@ -1999,7 +2005,7 @@ def build_ui() -> None:
                         safety_dialog.open()
 
                     async def report_click() -> None:
-                        manifest = state["manifest"]
+                        manifest = state.manifest
                         if manifest is None:
                             plan_status.text = "No hay manifiesto para reportar."
                             return

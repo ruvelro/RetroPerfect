@@ -23,6 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2.0",
+  "pytest-asyncio>=0.24.0",
   "ruff>=0.6.0",
   "mypy>=1.10.0",
   "types-PyYAML",
@@ -38,6 +39,8 @@ packages = ["src/retroperfect"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+asyncio_mode = "auto"
+main_file = ""
 
 [tool.ruff]
 line-length = 200
@@ -63,10 +66,4 @@ packages = ["retroperfect"]
 ignore_missing_imports = true
 check_untyped_defs = true
 
-[[tool.mypy.overrides]]
-# El estado global de la GUI (dict[str, object]) genera falsos attr-defined;
-# pendiente de tipar cuando se trocee gui.py.
-module = "retroperfect.gui"
-check_untyped_defs = false
-disable_error_code = ["attr-defined", "union-attr", "arg-type", "index", "operator", "assignment"]
 
