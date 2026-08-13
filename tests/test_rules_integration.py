@@ -374,3 +374,27 @@ def test_strict_exclusions_still_detect_real_tags() -> None:
     unl = _plain_rom("/roms/Game (World) (Unl).nes", "Game")
     assert _strict_exclusions(unl) == ["Unl"]
     assert _special_folder(unl) == "Unlicensed"
+
+
+def test_delete_manifest_targets_losers_not_winners(tmp_path: Path) -> None:
+    (tmp_path / "Game (Spain).nes").write_bytes(b"ES")
+    (tmp_path / "Game (USA).nes").write_bytes(b"US")
+    scan = scan_directory(tmp_path, Platform.NES)
+    profile = SelectionProfile(outputs=[ProfileOutput(bucket=OutputBucket.MAIN, strict_1g1r=False)])
+    manifest = build_manifest(scan, profile, [OutputBucket.MAIN], output_dir=None, action=ActionMode.DELETE)
+    assert len(manifest.entries) == 1
+    entry = manifest.entries[0]
+    assert entry.action == ActionMode.DELETE
+    assert entry.source_path.endswith("Game (USA).nes")
+    assert entry.destination_path is None
+
+
+def test_delete_manifest_protects_shared_containers(tmp_path: Path) -> None:
+    zipped = tmp_path / "Game.zip"
+    with zipfile.ZipFile(zipped, "w") as archive:
+        archive.writestr("Game (Spain).nes", b"ES")
+        archive.writestr("Game (USA).nes", b"US")
+    scan = scan_directory(tmp_path, Platform.NES)
+    profile = SelectionProfile(outputs=[ProfileOutput(bucket=OutputBucket.MAIN, strict_1g1r=False)])
+    manifest = build_manifest(scan, profile, [OutputBucket.MAIN], output_dir=None, action=ActionMode.DELETE)
+    assert manifest.entries == []

@@ -124,10 +124,10 @@ def plan(
 @app.command()
 def apply(
     manifest: Annotated[Path, typer.Option("--manifest", exists=True, file_okay=True, dir_okay=False, readable=True)],
-    mode: Annotated[ActionMode, typer.Option("--mode")] = ActionMode.COPY,
+    mode: Annotated[ActionMode | None, typer.Option("--mode", help="Guarda de seguridad: debe coincidir con la acción planificada en el manifiesto.")] = None,
     confirm: Annotated[bool, typer.Option("--confirm/--no-confirm")] = False,
 ) -> None:
-    """Apply a saved manifest. Requires --confirm."""
+    """Apply a saved manifest using each entry's planned action. Requires --confirm."""
     loaded = load_manifest(manifest)
     completed = apply_manifest(loaded, mode=mode, confirm=confirm)
     for line in completed:

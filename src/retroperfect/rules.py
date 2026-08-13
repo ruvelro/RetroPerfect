@@ -317,11 +317,14 @@ def build_manifest(
     )
     selected_paths: set[tuple[OutputBucket, str]] = set()
     copied_main_paths: set[str] = set()
+    winner_containers: set[str] = set()
+    selected_buckets: list[OutputBucket] = []
     overrides = overrides or {}
     layout = profile.export_layout
     for output in profile.outputs:
         if output.bucket not in outputs:
             continue
+        selected_buckets.append(output.bucket)
         groups = _groups_for_output(scan, output)
         for group_key, candidates in groups.items():
             override_rom_id = overrides.get(output.bucket.value, {}).get(group_key)
@@ -361,6 +364,9 @@ def build_manifest(
                                 )
                             )
                 continue
+            winner_containers.add(winner.container_path)
+            if action == ActionMode.DELETE:
+                continue
             if layout == ExportLayout.ORGANIZED and output.bucket == OutputBucket.RA and winner.container_path in copied_main_paths:
                 continue
             key = (output.bucket, winner.container_path)
@@ -390,6 +396,29 @@ def build_manifest(
                     dat_name=winner.dat_game.name if winner.dat_game else None,
                     ra_game_id=winner.ra_game_id,
                     explanation=explanation,
+                )
+            )
+    if action == ActionMode.DELETE and selected_buckets:
+        discard_reasons: dict[str, list[str]] = {}
+        for decision in manifest.discarded:
+            if not decision.kept:
+                discard_reasons.setdefault(decision.rom_id, decision.reasons)
+        delete_bucket = selected_buckets[0]
+        seen_containers: set[str] = set()
+        for rom in scan.roms:
+            container = rom.container_path
+            if container in winner_containers or container in seen_containers:
+                continue
+            seen_containers.add(container)
+            manifest.entries.append(
+                ManifestEntry(
+                    bucket=delete_bucket,
+                    action=ActionMode.DELETE,
+                    source_path=container,
+                    rom_id=rom.id,
+                    dat_name=rom.dat_game.name if rom.dat_game else None,
+                    ra_game_id=rom.ra_game_id,
+                    explanation=["Borrar descartado: ninguna salida seleccionada lo conserva", *discard_reasons.get(rom.id, [])],
                 )
             )
     return manifest

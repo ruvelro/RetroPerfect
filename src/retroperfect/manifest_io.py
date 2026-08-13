@@ -22,20 +22,25 @@ def load_manifest(path: Path) -> Manifest:
     return Manifest.model_validate_json(path.read_text(encoding="utf-8"))
 
 
-def apply_manifest(manifest: Manifest, mode: ActionMode, confirm: bool = False) -> list[str]:
+def apply_manifest(manifest: Manifest, mode: ActionMode | None = None, confirm: bool = False) -> list[str]:
     if not confirm:
         raise RuntimeError("Refusing to apply manifest without explicit confirmation.")
     completed: list[str] = []
     seen: set[tuple[str, str | None, ActionMode]] = set()
     for entry in manifest.entries:
+        action = entry.action
+        if mode is not None and mode != action:
+            raise RuntimeError(
+                f"El manifiesto se planificó con acción '{action.value}' pero se pidió aplicar '{mode.value}'. Regenera el plan con la acción deseada."
+            )
         source = Path(entry.source_path)
         destination = Path(entry.destination_path) if entry.destination_path else None
-        key = (str(source), str(destination) if destination else None, mode)
+        key = (str(source), str(destination) if destination else None, action)
         if key in seen:
             continue
         seen.add(key)
         if entry.patch_url:
-            if mode == ActionMode.DELETE:
+            if action == ActionMode.DELETE:
                 completed.append(f"skipped patch for delete mode: {source}")
                 continue
             if not destination:
@@ -51,19 +56,19 @@ def apply_manifest(manifest: Manifest, mode: ActionMode, confirm: bool = False) 
             destination.write_bytes(patched)
             completed.append(f"patched {source} with {patch.name} -> {destination}")
             continue
-        if mode == ActionMode.COPY:
+        if action == ActionMode.COPY:
             if not destination:
                 raise RuntimeError(f"Copy action needs a destination for {source}")
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
             completed.append(f"copied {source} -> {destination}")
-        elif mode == ActionMode.MOVE:
+        elif action == ActionMode.MOVE:
             if not destination:
                 raise RuntimeError(f"Move action needs a destination for {source}")
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(source), str(destination))
             completed.append(f"moved {source} -> {destination}")
-        elif mode == ActionMode.DELETE:
+        elif action == ActionMode.DELETE:
             source.unlink()
             completed.append(f"deleted {source}")
     return completed
