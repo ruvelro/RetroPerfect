@@ -218,6 +218,10 @@ class DatIndex:
     def match_set(self, set_name: str) -> DatGame | None:
         return self.by_set_name.get(_name_key(set_name))
 
+    @property
+    def has_header_candidates(self) -> bool:
+        return bool(self.headered_candidates_by_payload_size or self.headered_candidates_by_name)
+
     def _match_headered_payload(self, data: bytes, header: bytes) -> DatGame | None:
         candidate = header + data
         return self.match(

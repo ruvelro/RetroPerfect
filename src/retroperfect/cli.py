@@ -12,6 +12,7 @@ from .dat_manager import compare_dats, download_and_import_source, download_and_
 from .dat_sources import list_dat_sources
 from .manifest_io import apply_manifest, load_manifest, report_manifest, save_manifest
 from .models import ActionMode, ExportLayout, OutputBucket, Platform
+from .paths import project_state_dir
 from .platforms import platform_options, platform_spec
 from .profile import load_profile
 from .ra import annotate_scan_with_ra, sync_ra_hashes, sync_ra_patch_details
@@ -37,15 +38,17 @@ def scan(
     input: Annotated[Path, typer.Option("--input", exists=True, file_okay=True, dir_okay=True, readable=True)] = Path("."),
     dat: Annotated[Path | None, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
     annotate_ra: Annotated[bool, typer.Option("--annotate-ra/--no-annotate-ra")] = True,
+    hash_cache: Annotated[bool, typer.Option("--hash-cache/--no-hash-cache", help="Reutiliza hashes de escaneos anteriores si el archivo no cambió.")] = True,
 ) -> None:
-    """Escanea ROMs sueltas y contenedores ZIP de una plataforma."""
+    """Escanea ROMs sueltas y contenedores ZIP/7z de una plataforma."""
     parsed_platform = _platform(platform)
     dat_path = dat
     if dat_path and dat_path.suffix.lower() == ".zip":
         imported = import_dat_file(dat_path)
         dat_path = Path(imported[0].path)
     dat_index = DatIndex(parse_dat(dat_path)) if dat_path else None
-    result = scan_directory(input, parsed_platform, dat_index=dat_index, dat_path=dat_path)
+    cache_path = project_state_dir() / "scan-cache.sqlite3" if hash_cache else None
+    result = scan_directory(input, parsed_platform, dat_index=dat_index, dat_path=dat_path, hash_cache=cache_path)
     if annotate_ra:
         result = annotate_scan_with_ra(result)
     path = save_scan(result)

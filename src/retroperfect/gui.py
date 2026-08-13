@@ -1409,7 +1409,15 @@ def build_ui() -> None:
                         def progress_update(update: dict[str, object]) -> None:
                             state["scan_progress"] = update
 
-                        result = await asyncio.to_thread(scan_directory, Path(source.value), _current_platform(), dat_index, dat_path, progress_update)
+                        result = await asyncio.to_thread(
+                            scan_directory,
+                            Path(source.value),
+                            _current_platform(),
+                            dat_index,
+                            dat_path,
+                            progress_update,
+                            project_state_dir() / "scan-cache.sqlite3",
+                        )
                         result = await asyncio.to_thread(annotate_scan_with_ra, result)
                         save_scan(result)
                         state["scan"] = result
