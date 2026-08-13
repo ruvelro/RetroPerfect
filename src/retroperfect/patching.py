@@ -12,8 +12,8 @@ import requests
 
 from .paths import data_dir
 
-SUPPORTED_PATCH_EXTENSIONS = {".ips", ".bps"}
-KNOWN_UNSUPPORTED_PATCH_EXTENSIONS = {".ups", ".xdelta", ".vcdiff", ".ppf", ".aps", ".rup"}
+SUPPORTED_PATCH_EXTENSIONS = {".ips", ".bps", ".ups", ".xdelta", ".vcdiff"}
+KNOWN_UNSUPPORTED_PATCH_EXTENSIONS = {".ppf", ".aps", ".rup"}
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,10 @@ def apply_patch_bytes(source: bytes, patch: PatchPayload) -> bytes:
         return apply_ips(source, patch.data)
     if patch.suffix == ".bps":
         return apply_bps(source, patch.data)
+    if patch.suffix == ".ups":
+        return apply_ups(source, patch.data)
+    if patch.suffix in {".xdelta", ".vcdiff"}:
+        return apply_xdelta(source, patch.data)
     raise ValueError(f"Formato de parche no soportado: {patch.suffix}")
 
 
@@ -116,6 +120,60 @@ def apply_ips(source: bytes, patch: bytes) -> bytes:
         if end > len(output):
             output.extend(b"\0" * (end - len(output)))
         output[offset:end] = data
+
+
+def apply_ups(source: bytes, patch: bytes) -> bytes:
+    if not patch.startswith(b"UPS1"):
+        raise ValueError("UPS inválido: cabecera UPS1 no encontrada.")
+    if len(patch) < 4 + 12:
+        raise ValueError("UPS inválido: demasiado pequeño.")
+    patch_crc_expected = struct.unpack("<I", patch[-4:])[0]
+    if (binascii.crc32(patch[:-4]) & 0xFFFFFFFF) != patch_crc_expected:
+        raise ValueError("UPS inválido: CRC del parche no coincide.")
+    source_crc_expected, target_crc_expected = struct.unpack("<II", patch[-12:-4])
+    if (binascii.crc32(source) & 0xFFFFFFFF) != source_crc_expected:
+        raise ValueError("UPS no aplicable: CRC de ROM origen no coincide.")
+
+    reader = _BpsReader(patch[4:-12])
+    source_size = reader.read_number()
+    target_size = reader.read_number()
+    if len(source) != source_size:
+        raise ValueError("UPS no aplicable: tamaño de ROM origen no coincide.")
+
+    output = bytearray(target_size)
+    output[: min(source_size, target_size)] = source[:target_size]
+    pointer = 0
+    while reader.index < len(reader.data):
+        pointer += reader.read_number()
+        while True:
+            byte = reader.read(1)[0]
+            if byte == 0:
+                pointer += 1
+                break
+            if pointer < target_size:
+                output[pointer] ^= byte
+            pointer += 1
+    result = bytes(output)
+    if (binascii.crc32(result) & 0xFFFFFFFF) != target_crc_expected:
+        raise ValueError("UPS aplicado, pero CRC final no coincide.")
+    return result
+
+
+def apply_xdelta(source: bytes, patch: bytes) -> bytes:
+    import tempfile
+
+    import pyxdelta
+
+    with tempfile.TemporaryDirectory(prefix="retroperfect-xdelta-") as workdir:
+        base = Path(workdir)
+        source_path = base / "source.bin"
+        patch_path = base / "patch.xdelta"
+        output_path = base / "output.bin"
+        source_path.write_bytes(source)
+        patch_path.write_bytes(patch)
+        if not pyxdelta.decode(str(source_path), str(patch_path), str(output_path)):
+            raise ValueError("xdelta no aplicable: el parche no corresponde a esta ROM.")
+        return output_path.read_bytes()
 
 
 def apply_bps(source: bytes, patch: bytes) -> bytes:

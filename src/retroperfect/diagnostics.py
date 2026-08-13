@@ -175,7 +175,7 @@ def build_patch_queue(manifest: Manifest | None) -> list[PatchQueueRow]:
         if not entry.patch_url:
             continue
         suffix = Path(urlparse(entry.patch_url).path).suffix.lower()
-        if suffix in {".ips", ".bps", ".zip"}:
+        if suffix in {".ips", ".bps", ".ups", ".xdelta", ".vcdiff", ".zip"}:
             status = "Listo"
         elif suffix:
             status = f"Pendiente ({suffix})"

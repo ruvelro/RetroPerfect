@@ -71,3 +71,64 @@ def test_download_patch_caches_per_url_not_per_filename(tmp_path: Path, monkeypa
     assert path_a.name == "patch.ips"
     monkeypatch.setattr(patching.requests, "get", lambda url, timeout: (_ for _ in ()).throw(AssertionError("no debe descargar de nuevo")))
     assert patching.download_patch("https://example.test/game-a/patch.ips") == path_a
+
+
+def _ups_varint(value: int) -> bytes:
+    out = bytearray()
+    while True:
+        chunk = value & 0x7F
+        value >>= 7
+        if value == 0:
+            out.append(chunk | 0x80)
+            return bytes(out)
+        out.append(chunk)
+        value -= 1
+
+
+def test_apply_ups_patch() -> None:
+    import binascii
+    import struct
+
+    from retroperfect.patching import apply_ups
+
+    source = b"abcdef"
+    target = b"aXcdeF"
+    body = b"UPS1" + _ups_varint(len(source)) + _ups_varint(len(target))
+    # bloque 1: saltar 1, XOR en offset 1
+    body += _ups_varint(1) + bytes([ord("b") ^ ord("X")]) + b"\x00"
+    # bloque 2: el terminador anterior dejó el puntero en 3; saltar 2 hasta offset 5
+    body += _ups_varint(2) + bytes([ord("f") ^ ord("F")]) + b"\x00"
+    body += struct.pack("<II", binascii.crc32(source) & 0xFFFFFFFF, binascii.crc32(target) & 0xFFFFFFFF)
+    patch = body + struct.pack("<I", binascii.crc32(body) & 0xFFFFFFFF)
+    assert apply_ups(source, patch) == target
+
+
+def test_apply_ups_rejects_wrong_source() -> None:
+    import binascii
+    import struct
+
+    import pytest
+
+    from retroperfect.patching import apply_ups
+
+    source = b"abcdef"
+    body = b"UPS1" + _ups_varint(6) + _ups_varint(6) + struct.pack("<II", binascii.crc32(source) & 0xFFFFFFFF, binascii.crc32(source) & 0xFFFFFFFF)
+    patch = body + struct.pack("<I", binascii.crc32(body) & 0xFFFFFFFF)
+    with pytest.raises(ValueError, match="CRC de ROM origen"):
+        apply_ups(b"otra-rom", patch)
+
+
+def test_apply_xdelta_roundtrip(tmp_path: Path) -> None:
+    import pyxdelta
+
+    from retroperfect.patching import apply_xdelta
+
+    source = b"hola mundo " * 200
+    target = b"hola MUNDO " * 200 + b"cola nueva"
+    src = tmp_path / "src.bin"
+    dst = tmp_path / "dst.bin"
+    patch = tmp_path / "p.xdelta"
+    src.write_bytes(source)
+    dst.write_bytes(target)
+    assert pyxdelta.run(str(src), str(dst), str(patch))
+    assert apply_xdelta(source, patch.read_bytes()) == target
