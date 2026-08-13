@@ -132,3 +132,44 @@ def test_apply_xdelta_roundtrip(tmp_path: Path) -> None:
     dst.write_bytes(target)
     assert pyxdelta.run(str(src), str(dst), str(patch))
     assert apply_xdelta(source, patch.read_bytes()) == target
+
+
+def test_apply_ppf3_patch() -> None:
+    from retroperfect.patching import apply_ppf
+
+    source = bytes(64)
+    header = b"PPF30" + bytes([2]) + b"desc".ljust(50, b"\x00") + bytes([0]) + bytes([0]) + bytes([0]) + bytes([0])
+    record = (10).to_bytes(8, "little") + bytes([3]) + b"ABC"
+    patched = apply_ppf(source, header + record)
+    assert patched[10:13] == b"ABC"
+    assert len(patched) == 64
+
+
+def test_apply_ppf3_with_undo_and_file_id() -> None:
+    from retroperfect.patching import apply_ppf
+
+    source = bytes(32)
+    header = b"PPF30" + bytes([2]) + bytes(50) + bytes([0]) + bytes([0]) + bytes([1]) + bytes([0])  # con undo
+    record = (4).to_bytes(8, "little") + bytes([2]) + b"XY" + b"\x00\x00"  # datos + undo
+    trailer = b"@BEGIN_FILE_ID.DIZ" + b"comentario" + b"@END_FILE_ID.DIZ"
+    patched = apply_ppf(source, header + record + trailer)
+    assert patched[4:6] == b"XY"
+
+
+def test_apply_ppf2_checks_size_and_blockcheck() -> None:
+    import pytest
+
+    from retroperfect.patching import PPF_BLOCKCHECK_OFFSET, apply_ppf
+
+    source = bytearray(PPF_BLOCKCHECK_OFFSET + 2048)
+    source[PPF_BLOCKCHECK_OFFSET : PPF_BLOCKCHECK_OFFSET + 4] = b"SYNC"
+    source = bytes(source)
+    blockcheck = source[PPF_BLOCKCHECK_OFFSET : PPF_BLOCKCHECK_OFFSET + 1024]
+    header = b"PPF20" + bytes([1]) + bytes(50) + len(source).to_bytes(4, "little") + blockcheck
+    record = (8).to_bytes(4, "little") + bytes([2]) + b"OK"
+    patched = apply_ppf(source, header + record)
+    assert patched[8:10] == b"OK"
+
+    wrong_size = header.replace(len(source).to_bytes(4, "little"), (123).to_bytes(4, "little"))
+    with pytest.raises(ValueError, match="tamaño"):
+        apply_ppf(source, wrong_size + record)

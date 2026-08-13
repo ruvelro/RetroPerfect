@@ -11,8 +11,13 @@ from urllib.parse import urlparse
 from .http import http_get
 from .paths import data_dir
 
-SUPPORTED_PATCH_EXTENSIONS = {".ips", ".bps", ".ups", ".xdelta", ".vcdiff"}
-KNOWN_UNSUPPORTED_PATCH_EXTENSIONS = {".ppf", ".aps", ".rup"}
+SUPPORTED_PATCH_EXTENSIONS = {".ips", ".bps", ".ups", ".xdelta", ".vcdiff", ".ppf"}
+KNOWN_UNSUPPORTED_PATCH_EXTENSIONS = {".aps", ".rup"}
+
+PPF_DESCRIPTION_SIZE = 50
+PPF_BLOCKCHECK_SIZE = 1024
+PPF_BLOCKCHECK_OFFSET = 0x9320
+PPF_FILE_ID_MARKER = b"@BEGIN_FILE_ID.DIZ"
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,8 @@ def apply_patch_bytes(source: bytes, patch: PatchPayload) -> bytes:
         return apply_ups(source, patch.data)
     if patch.suffix in {".xdelta", ".vcdiff"}:
         return apply_xdelta(source, patch.data)
+    if patch.suffix == ".ppf":
+        return apply_ppf(source, patch.data)
     raise ValueError(f"Formato de parche no soportado: {patch.suffix}")
 
 
@@ -156,6 +163,88 @@ def apply_ups(source: bytes, patch: bytes) -> bytes:
     if (binascii.crc32(result) & 0xFFFFFFFF) != target_crc_expected:
         raise ValueError("UPS aplicado, pero CRC final no coincide.")
     return result
+
+
+def apply_ppf(source: bytes, patch: bytes) -> bytes:
+    """Aplica parches PPF 2.0 y 3.0 (PlayStation Patch Format)."""
+    if patch.startswith(b"PPF30"):
+        return _apply_ppf3(source, patch)
+    if patch.startswith(b"PPF20"):
+        return _apply_ppf2(source, patch)
+    if patch.startswith(b"PPF10"):
+        raise ValueError("PPF 1.0 no está soportado; convierte el parche a PPF 3.0.")
+    raise ValueError("PPF inválido: cabecera PPF20/PPF30 no encontrada.")
+
+
+def _ppf_records_end(patch: bytes) -> int:
+    marker = patch.find(PPF_FILE_ID_MARKER)
+    return marker if marker != -1 else len(patch)
+
+
+def _apply_ppf3(source: bytes, patch: bytes) -> bytes:
+    if len(patch) < 60:
+        raise ValueError("PPF3 inválido: demasiado pequeño.")
+    has_blockcheck = patch[57] != 0
+    has_undo = patch[58] != 0
+    index = 60
+    if has_blockcheck:
+        blockcheck = patch[index : index + PPF_BLOCKCHECK_SIZE]
+        index += PPF_BLOCKCHECK_SIZE
+        expected = source[PPF_BLOCKCHECK_OFFSET : PPF_BLOCKCHECK_OFFSET + PPF_BLOCKCHECK_SIZE]
+        if len(expected) == PPF_BLOCKCHECK_SIZE and blockcheck != expected:
+            raise ValueError("PPF3 no aplicable: el bloque de validación no coincide con esta imagen.")
+    output = bytearray(source)
+    end = _ppf_records_end(patch)
+    while index < end:
+        if index + 9 > end:
+            raise ValueError("PPF3 inválido: registro incompleto.")
+        offset = int.from_bytes(patch[index : index + 8], "little")
+        index += 8
+        size = patch[index]
+        index += 1
+        if index + size > end:
+            raise ValueError("PPF3 inválido: datos incompletos.")
+        data = patch[index : index + size]
+        index += size
+        if has_undo:
+            index += size
+        _ppf_write(output, offset, data)
+    return bytes(output)
+
+
+def _apply_ppf2(source: bytes, patch: bytes) -> bytes:
+    header_size = 6 + PPF_DESCRIPTION_SIZE + 4 + PPF_BLOCKCHECK_SIZE
+    if len(patch) < header_size:
+        raise ValueError("PPF2 inválido: demasiado pequeño.")
+    declared_size = int.from_bytes(patch[56:60], "little")
+    if declared_size and declared_size != len(source):
+        raise ValueError("PPF2 no aplicable: tamaño de imagen origen no coincide.")
+    blockcheck = patch[60 : 60 + PPF_BLOCKCHECK_SIZE]
+    expected = source[PPF_BLOCKCHECK_OFFSET : PPF_BLOCKCHECK_OFFSET + PPF_BLOCKCHECK_SIZE]
+    if len(expected) == PPF_BLOCKCHECK_SIZE and blockcheck != expected:
+        raise ValueError("PPF2 no aplicable: el bloque de validación no coincide con esta imagen.")
+    output = bytearray(source)
+    index = header_size
+    end = _ppf_records_end(patch)
+    while index < end:
+        if index + 5 > end:
+            raise ValueError("PPF2 inválido: registro incompleto.")
+        offset = int.from_bytes(patch[index : index + 4], "little")
+        index += 4
+        size = patch[index]
+        index += 1
+        if index + size > end:
+            raise ValueError("PPF2 inválido: datos incompletos.")
+        _ppf_write(output, offset, patch[index : index + size])
+        index += size
+    return bytes(output)
+
+
+def _ppf_write(output: bytearray, offset: int, data: bytes) -> None:
+    end = offset + len(data)
+    if end > len(output):
+        output.extend(b"\0" * (end - len(output)))
+    output[offset:end] = data
 
 
 def apply_xdelta(source: bytes, patch: bytes) -> bytes:
