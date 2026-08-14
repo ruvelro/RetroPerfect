@@ -11,3 +11,5 @@ build/
 *.egg-info/
 
 *.spec
+
+.claude/settings.local.json

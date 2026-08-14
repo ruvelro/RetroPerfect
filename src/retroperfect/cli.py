@@ -10,12 +10,15 @@ from rich.table import Table
 from .dat import DatIndex, parse_dat
 from .dat_manager import compare_dats, download_and_import_source, download_and_import_url, import_dat_file, list_installed_dats, validate_setup
 from .dat_sources import list_dat_sources
+from .download_plan import build_download_plan, human_size, resolve_remote_files
+from .downloader import run_download_plan
 from .manifest_io import apply_manifest, load_manifest, report_manifest, save_manifest
 from .models import ActionMode, ExportLayout, OutputBucket, Platform
 from .paths import project_state_dir
 from .platforms import platform_options, platform_spec
 from .profile import load_profile
 from .ra import annotate_scan_with_ra, sync_ra_hashes, sync_ra_patch_details
+from .rom_sources import SOURCE_KIND_LABELS, RomSource, add_rom_source, list_rom_sources, remove_rom_source
 from .rules import build_manifest
 from .scanner import scan_directory
 from .storage import load_scan, save_scan
@@ -254,6 +257,116 @@ def dat_update(
         table.add_row(result.name, result.platform or "", f"[{color}]{result.status}[/{color}]", result.detail)
     console.print(table)
     if any(result.status == "error" for result in results):
+        raise typer.Exit(code=1)
+
+
+@app.command("rom-sources")
+def rom_sources() -> None:
+    """Lista las fuentes de romsets configuradas. RetroPerfect no trae ninguna: las añades tú."""
+    sources = list_rom_sources()
+    if not sources:
+        console.print("No hay fuentes configuradas. Añade una con [bold]rom-source-add[/bold]:")
+        for kind, label in SOURCE_KIND_LABELS.items():
+            console.print(f"  · [cyan]{kind}[/cyan] — {label}")
+        return
+    table = Table(title="Fuentes de romsets")
+    for column in ["ID", "Etiqueta", "Tipo", "Origen", "Plataforma", "Activa"]:
+        table.add_column(column)
+    for source in sources:
+        table.add_row(source.id, source.label, source.kind, source.location, source.platform or "todas", "sí" if source.enabled else "no")
+    console.print(table)
+
+
+@app.command("rom-source-add")
+def rom_source_add(
+    id: Annotated[str, typer.Option("--id", help="Identificador corto y único.")],
+    label: Annotated[str, typer.Option("--label", help="Nombre visible de la fuente.")],
+    kind: Annotated[str, typer.Option("--kind", help="archive_org, http_index o local_dir.")],
+    location: Annotated[str, typer.Option("--location", help="Ítem de archive.org, URL del índice o ruta de la carpeta.")],
+    platform: Annotated[str | None, typer.Option("--platform", help="Limita la fuente a una plataforma.")] = None,
+    notes: Annotated[str, typer.Option("--notes")] = "",
+) -> None:
+    """Registra una fuente de descarga. Tú eliges el origen y respondes de su contenido."""
+    if kind not in SOURCE_KIND_LABELS:
+        raise typer.BadParameter(f"Tipo no soportado '{kind}'. Soportados: {', '.join(SOURCE_KIND_LABELS)}.")
+    parsed_platform = _platform(platform).value if platform else None
+    source = add_rom_source(RomSource(id=id, label=label, kind=kind, location=location, platform=parsed_platform, notes=notes))  # type: ignore[arg-type]
+    console.print(f"[green]Fuente añadida[/green] {source.label} ({source.kind} → {source.location})")
+
+
+@app.command("rom-source-remove")
+def rom_source_remove(source_id: Annotated[str, typer.Argument(help="ID de la fuente (ver rom-sources).")]) -> None:
+    """Elimina una fuente de romsets y su índice cacheado."""
+    if not remove_rom_source(source_id):
+        console.print(f"[yellow]No existe ninguna fuente con ID '{source_id}'.[/yellow]")
+        raise typer.Exit(code=1)
+    console.print(f"[green]Fuente eliminada:[/green] {source_id}")
+
+
+@app.command()
+def download(
+    dat: Annotated[Path, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True, help="DAT que define qué debería tener la colección.")],
+    platform: Annotated[str, typer.Option("--platform")] = "nes",
+    scan: Annotated[Path | None, typer.Option("--scan", exists=True, file_okay=True, dir_okay=False, readable=True, help="Escaneo previo; sin él se considera que no tienes nada.")] = None,
+    dest: Annotated[Path | None, typer.Option("--dest", help="Carpeta donde instalar lo descargado y verificado.")] = None,
+    profile: Annotated[str, typer.Option("--profile")] = "default",
+    source: Annotated[str | None, typer.Option("--source", help="Limita a una fuente concreta.")] = None,
+    all_variants: Annotated[bool, typer.Option("--all-variants/--profile-filter", help="Sin filtro de perfil, todas las variantes del DAT.")] = False,
+    refresh: Annotated[bool, typer.Option("--refresh/--no-refresh", help="Fuerza releer el índice de las fuentes.")] = False,
+    limit: Annotated[int | None, typer.Option("--limit", min=1, help="Descarga como mucho N archivos.")] = None,
+    confirm: Annotated[bool, typer.Option("--confirm/--no-confirm", help="Sin --confirm solo se muestra el plan.")] = False,
+) -> None:
+    """Descarga de tus fuentes solo lo que falta según el DAT y el perfil, verificándolo antes de instalarlo."""
+    parsed_platform = _platform(platform)
+    sources = [item for item in list_rom_sources(parsed_platform.value) if source is None or item.id == source]
+    if not sources:
+        console.print("[yellow]No hay fuentes configuradas para esta plataforma.[/yellow] Añade una con rom-source-add.")
+        raise typer.Exit(code=1)
+
+    catalog = parse_dat(dat)
+    scan_result = load_scan(scan) if scan else None
+    remote_files, errors = resolve_remote_files(sources, refresh=refresh)
+    for message in errors:
+        console.print(f"[red]Fuente no disponible:[/red] {message}")
+    if not remote_files:
+        raise typer.Exit(code=1)
+
+    plan = build_download_plan(
+        catalog,
+        scan_result,
+        load_profile(profile),
+        remote_files,
+        platform=parsed_platform,
+        apply_profile=not all_variants,
+    )
+    if limit:
+        plan.candidates = plan.candidates[:limit]
+
+    table = Table(title=f"Plan de descarga · {platform_spec(parsed_platform).short_name}")
+    for column in ["Juego", "Archivo", "Tamaño", "Confianza"]:
+        table.add_column(column)
+    for candidate in plan.candidates:
+        table.add_row(candidate.title, candidate.file_name, human_size(candidate.size), candidate.confidence)
+    console.print(table)
+    console.print(
+        f"Grupos en el DAT: {plan.dat_groups} · ya presentes: {plan.present_groups} · descartados por perfil: {plan.filtered_by_profile} "
+        f"· a descargar: {len(plan.candidates)} ({human_size(plan.total_bytes)}) · sin fuente: {len(plan.unavailable)}"
+    )
+
+    if not plan.candidates:
+        return
+    if not confirm:
+        console.print("[yellow]Simulación:[/yellow] repite con --confirm --dest <carpeta> para descargar.")
+        return
+    if dest is None:
+        raise typer.BadParameter("--dest es obligatorio para descargar de verdad.")
+
+    report = run_download_plan(plan, dest, dat_index=DatIndex(catalog))
+    for outcome in report.outcomes:
+        color = {"ok": "green", "present": "blue", "mismatch": "red", "error": "red", "cancelled": "yellow"}.get(outcome.status, "white")
+        console.print(f"[{color}]{outcome.status_label}[/{color}] {outcome.file_name} {outcome.detail}")
+    console.print(f"Descargados {report.downloaded}, con problemas {report.failed}, total {human_size(report.total_bytes)}.")
+    if report.failed:
         raise typer.Exit(code=1)
 
 

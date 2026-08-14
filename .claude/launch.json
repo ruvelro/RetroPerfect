@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "retroperfect-gui",
+      "runtimeExecutable": ".venv313/bin/retroperfect",
+      "runtimeArgs": ["gui", "--port", "8080"],
+      "port": 8080
+    }
+  ]
+}

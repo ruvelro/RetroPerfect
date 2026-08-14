@@ -84,7 +84,7 @@ SPECIAL_TAG_FOLDERS = {
 }
 
 
-def _priority_index(values: list[str], priority: list[str]) -> int:
+def priority_index(values: list[str], priority: list[str]) -> int:
     if not values:
         return len(priority) + 10
     indexes = [priority.index(value) for value in values if value in priority]
@@ -92,8 +92,8 @@ def _priority_index(values: list[str], priority: list[str]) -> int:
 
 
 def explain_score(rom: ScannedRom, output: ProfileOutput) -> list[str]:
-    region_rank = _priority_index(rom.metadata.regions, output.region_priority)
-    language_rank = _priority_index(rom.metadata.languages, output.language_priority)
+    region_rank = priority_index(rom.metadata.regions, output.region_priority)
+    language_rank = priority_index(rom.metadata.languages, output.language_priority)
     revision_label = rom.metadata.version or (str(rom.metadata.revision) if rom.metadata.revision else "unknown")
     reasons = [
         f"Region rank {region_rank}: {', '.join(rom.metadata.regions) or 'unknown'}",
@@ -143,8 +143,8 @@ def _strict_exclusions(rom: ScannedRom) -> list[str]:
 
 def _score(rom: ScannedRom, output: ProfileOutput) -> tuple:
     return (
-        _priority_index(rom.metadata.regions, output.region_priority),
-        _priority_index(rom.metadata.languages, output.language_priority),
+        priority_index(rom.metadata.regions, output.region_priority),
+        priority_index(rom.metadata.languages, output.language_priority),
         0 if output.prefer_ra_compatible and rom.ra_game_id else 1,
         -rom.metadata.revision if output.prefer_newest_revision else rom.metadata.revision,
         0 if rom.dat_game else 1,
@@ -153,16 +153,16 @@ def _score(rom: ScannedRom, output: ProfileOutput) -> tuple:
 
 
 def _loss_reasons(rom: ScannedRom, winner: ScannedRom, output: ProfileOutput) -> list[str]:
-    rom_region = _priority_index(rom.metadata.regions, output.region_priority)
-    winner_region = _priority_index(winner.metadata.regions, output.region_priority)
+    rom_region = priority_index(rom.metadata.regions, output.region_priority)
+    winner_region = priority_index(winner.metadata.regions, output.region_priority)
     if rom_region != winner_region:
         return [
             "Discarded by region priority",
             f"{', '.join(rom.metadata.regions) or 'unknown'} loses to {', '.join(winner.metadata.regions) or 'unknown'}",
         ]
 
-    rom_language = _priority_index(rom.metadata.languages, output.language_priority)
-    winner_language = _priority_index(winner.metadata.languages, output.language_priority)
+    rom_language = priority_index(rom.metadata.languages, output.language_priority)
+    winner_language = priority_index(winner.metadata.languages, output.language_priority)
     if rom_language != winner_language:
         return [
             "Discarded by language priority",
@@ -228,8 +228,8 @@ def _destination_path(output_dir: Path | None, rom: ScannedRom, output: ProfileO
 def _patch_candidate_score(candidate: RaPatchCandidate, output: ProfileOutput) -> tuple:
     metadata = parse_no_intro_name(candidate.hash_name or candidate.title or "")
     return (
-        _priority_index(metadata.regions, output.region_priority),
-        _priority_index(metadata.languages, output.language_priority),
+        priority_index(metadata.regions, output.region_priority),
+        priority_index(metadata.languages, output.language_priority),
         -metadata.revision if output.prefer_newest_revision else metadata.revision,
         candidate.hash_name or "",
     )

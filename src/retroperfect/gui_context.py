@@ -26,6 +26,7 @@ class UiContext:
     profile_tab: Any = None
     scan_tab: Any = None
     verify_tab: Any = None
+    download_tab: Any = None
     decisions_tab: Any = None
     plan_tab: Any = None
     summary_tab: Any = None
@@ -63,6 +64,9 @@ class UiContext:
 
     # Exportado por Escaneo.
     scan_status: Any = None
+
+    # Exportado por Descargar.
+    refresh_download_sources: Any = None
 
     # Exportado por Resumen y Decisiones.
     refresh_coverage: Any = None

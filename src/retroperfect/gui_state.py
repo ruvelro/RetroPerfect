@@ -31,6 +31,7 @@ class AppState:
     suppress_setup_dirty: bool = False
     scan_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "idle"})
     ra_details_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "updated": 0, "running": False})
+    download_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "title": "", "phase": "idle"})
     dark_mode: bool = False
     activity: list[dict[str, str]] = field(default_factory=list)
     # Operaciones largas en curso; impiden el apagado automático por inactividad.

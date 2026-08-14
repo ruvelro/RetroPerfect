@@ -12,7 +12,7 @@ from .gui_context import UiContext
 from .gui_rows import _dat_rows, _page_class, _ra_status_label
 from .gui_shutdown import busy_reason, install_idle_shutdown, request_shutdown
 from .gui_state import AppState, _current_platform, _log_activity, _online_dat_rows, reset_state, state
-from .gui_tabs import activity, dats, decisions, plan, profile, scan, setup, summary, verify
+from .gui_tabs import activity, dats, decisions, download, plan, profile, scan, setup, summary, verify
 from .gui_tabs import platform as platform_tab_module
 from .gui_widgets import GLOBAL_CSS, _install_local_reconnect_guard
 from .models import Platform
@@ -88,6 +88,7 @@ def build_ui() -> None:
             ctx.profile_tab = ui.tab("Perfil", icon="tune")
             ctx.scan_tab = ui.tab("Escaneo", icon="search")
             ctx.verify_tab = ui.tab("Verificar", icon="verified")
+            ctx.download_tab = ui.tab("Descargar", icon="cloud_download")
             ctx.decisions_tab = ui.tab("Decisiones", icon="fact_check")
             ctx.plan_tab = ui.tab("Plan", icon="rule")
             ctx.summary_tab = ui.tab("Resumen", icon="dashboard")
@@ -128,6 +129,8 @@ def build_ui() -> None:
             _set_tab_enabled(ctx.profile_tab, setup_ready)
             _set_tab_enabled(ctx.scan_tab, setup_ready)
             _set_tab_enabled(ctx.verify_tab, setup_ready and has_scan)
+            # Descargar no se bloquea: las fuentes se configuran antes de tener nada
+            # escaneado, y el propio botón de plan avisa si falta el DAT o el origen.
             _set_tab_enabled(ctx.decisions_tab, setup_ready and has_scan)
             _set_tab_enabled(ctx.plan_tab, setup_ready and has_scan)
             _set_tab_enabled(ctx.summary_tab, setup_ready and has_scan and has_manifest)
@@ -158,6 +161,7 @@ def build_ui() -> None:
             profile.build(ctx)
             scan.build(ctx)
             verify.build(ctx)
+            download.build(ctx)
             summary.build(ctx)
             decisions.build(ctx)
             plan.build(ctx)

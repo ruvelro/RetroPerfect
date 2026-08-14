@@ -263,6 +263,20 @@ def _scan_one_path(
         return [], [str(path)]
 
 
+def scan_file(path: Path, platform: Platform, dat_index: DatIndex | None = None) -> list[ScannedRom]:
+    """Escanea un único archivo (suelto o contenedor). Lo usa el verificador de descargas."""
+    spec = platform_spec(platform)
+    roms, _unmatched = _scan_one_path(
+        path,
+        platform,
+        arcade_mode=spec.kind == "arcade",
+        rom_extensions=set(spec.rom_extensions),
+        dat_index=dat_index,
+        cache=None,
+    )
+    return roms
+
+
 def scan_directory(
     input_path: Path,
     platform: Platform,

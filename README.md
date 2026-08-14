@@ -4,7 +4,7 @@
 
 **RetroPerfect** te ayuda a convertir una colección de ROMs desordenada en una colección perfecta: verificada contra DATs oficiales (No-Intro, Redump, MAME, FBNeo), sin duplicados, con la mejor versión de cada juego según tus preferencias de región e idioma, y preparada para [RetroAchievements](https://retroachievements.org).
 
-Funciona en local, con interfaz gráfica y línea de comandos, y **nunca descarga ROMs**: trabaja únicamente con los archivos que ya tienes.
+Funciona en local, con interfaz gráfica y línea de comandos. **No incluye ni enlaza ROMs**: trabaja con los archivos que ya tienes y, si configuras tus propias fuentes, puede completar lo que falte descargándolo de ellas y verificándolo contra el DAT antes de tocar tu colección.
 
 ![Estado](https://img.shields.io/badge/estado-en%20desarrollo-yellow) ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 
@@ -17,6 +17,7 @@ Funciona en local, con interfaz gráfica y línea de comandos, y **nunca descarg
 - **Cura** con perfiles 1G1R (*1 Game 1 ROM*): de 5 copias de un juego (Japón, USA, Europa, beta, hack...) conserva solo la que prefieras, con reglas de prioridad por región e idioma explicables — cada decisión viene con su motivo.
 - **RetroAchievements**: marca qué ROMs de tu colección son compatibles con logros, y si una no lo es, puede localizar y aplicar el parche oficial automáticamente.
 - **Aplica el plan con red de seguridad**: verificación MD5 byte a byte de cada archivo copiado o movido, comprobaciones previas de espacio y colisiones, y papelera restaurable en vez de borrados.
+- **Completa lo que falta** desde las fuentes que tú configures (tu NAS, un ítem de archive.org, un índice HTTP): descarga solo los juegos ausentes según el DAT y tu perfil, y verifica cada archivo por hash antes de instalarlo. RetroPerfect no trae ninguna fuente preconfigurada.
 
 ## Seguridad ante todo
 
@@ -168,6 +169,35 @@ La GUI avisa en **Biblioteca DAT** cuando algún DAT lleva más de 7 días sin r
 0 8 * * 1 cd /ruta/a/tu/coleccion && /ruta/al/venv/bin/retroperfect dat-update
 ```
 
+### Descargar lo que falta
+
+RetroPerfect **no incluye ningún catálogo de ROMs ni enlaza a espejos**: las fuentes las configuras tú y respondes de lo que descargas. Lo que aporta la herramienta es saber *qué* te falta y verificar *qué* ha llegado: cruza tus fuentes con el DAT y con tu perfil, descarga solo los juegos ausentes (una variante por grupo 1G1R, no el set entero) y comprueba el hash de cada archivo antes de instalarlo en el romset. Lo que no cuadra con el DAT acaba en `.retroperfect/downloads/quarantine/` con el motivo, nunca en tu colección.
+
+Hay tres tipos de fuente:
+
+| Tipo | Origen | Notas |
+| --- | --- | --- |
+| `archive_org` | identificador o URL de un ítem de archive.org | trae tamaño y md5/crc32, así que el emparejamiento es por hash |
+| `http_index` | URL de un autoíndice de Apache/nginx | empareja por nombre; la verificación sigue siendo por hash tras descargar |
+| `local_dir` | carpeta local, NAS o unidad de red montada | ideal para restaurar desde tu propia copia de seguridad |
+
+```bash
+# Registra una fuente (aquí, tu backup en el NAS)
+retroperfect rom-source-add --id nas --label "Backup NAS" --kind local_dir \
+  --location /Volumes/nas/roms/nes --platform nes
+
+retroperfect rom-sources          # lista las fuentes configuradas
+
+# Simula: qué falta y de dónde saldría (no descarga nada)
+retroperfect download --platform nes --dat nes.dat --scan .retroperfect/scans/latest.json
+
+# Descarga, verifica contra el DAT e instala en el romset
+retroperfect download --platform nes --dat nes.dat --scan .retroperfect/scans/latest.json \
+  --dest ./romset --confirm
+```
+
+Sin `--confirm` solo se muestra el plan. `--all-variants` desactiva el filtro del perfil y planifica todas las variantes del DAT; `--limit N` acota la tanda; `--refresh` fuerza releer los índices remotos (se cachean 12 h). Las descargas HTTP se reanudan solas si se cortan, y respetan el `Retry-After` del servidor. En la GUI, todo esto vive en la pestaña **Descargar**.
+
 ### Papelera
 
 ```bash
@@ -225,4 +255,4 @@ La CI ejecuta las tres cosas en Python 3.11, 3.12 y 3.13.
 
 ## Aviso
 
-RetroPerfect no descarga, incluye ni enlaza ROMs. Está pensado para gestionar copias de seguridad de tu propia colección. Los DATs se descargan de fuentes públicas (espejo Libretro) o los importas tú desde DAT-o-MATIC/Redump.
+RetroPerfect no incluye, distribuye ni enlaza ROMs, y no trae ninguna fuente de descarga preconfigurada. Está pensado para gestionar copias de seguridad de tu propia colección. Los DATs se descargan de fuentes públicas (espejo Libretro) o los importas tú desde DAT-o-MATIC/Redump. Si usas la pestaña Descargar, las fuentes las añades tú y eres responsable de que su contenido sea legal en tu jurisdicción.
