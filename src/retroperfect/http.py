@@ -7,6 +7,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from . import __version__
+
 DEFAULT_TIMEOUT_SECONDS = 60
 
 _session: requests.Session | None = None
@@ -24,7 +26,9 @@ def session() -> requests.Session:
             fresh = requests.Session()
             fresh.mount("https://", adapter)
             fresh.mount("http://", adapter)
-            fresh.headers["User-Agent"] = "RetroPerfect/0.1"
+            # Se deriva de la versión del paquete: el User-Agent llega a espejos públicos
+            # y quedarse obsoleto a mano ya pasó una vez.
+            fresh.headers["User-Agent"] = f"RetroPerfect/{__version__}"
             _session = fresh
     return _session
 
