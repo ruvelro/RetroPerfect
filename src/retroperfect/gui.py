@@ -43,7 +43,7 @@ def build_ui() -> None:
             header_plan_badge = ui.badge("Plan", color="grey")
             header_output_badge = ui.badge("Salida", color="grey")
             ui.badge("Local", color="secondary")
-            theme_button = ui.button("Oscuro", icon="dark_mode").props("dense flat").classes("rp-theme-button")
+            theme_button = ui.button("Oscuro", icon="dark_mode").props("dense unelevated color=white text-color=primary")
 
             def toggle_theme() -> None:
                 enabled = not bool(state.dark_mode)
@@ -78,7 +78,7 @@ def build_ui() -> None:
                 )
                 quit_dialog.open()
 
-            ui.button("Salir", icon="power_settings_new", on_click=quit_click).props("dense flat").classes("rp-theme-button")
+            ui.button("Salir", icon="power_settings_new", on_click=quit_click).props("dense unelevated color=negative")
 
     with ui.column().classes(_page_class()):
         with ui.tabs().classes("w-full") as tabs:

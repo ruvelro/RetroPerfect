@@ -108,11 +108,6 @@ body.body--dark { background: #101719; color: #e8eef0; }
 .rp-step-card {
     background: #fff;
 }
-.rp-theme-button {
-    border: 1px solid rgba(255,255,255,.45);
-    color: #fff !important;
-    background: rgba(255,255,255,.10) !important;
-}
 body.body--dark .bg-white,
 body.body--dark .rp-panel,
 body.body--dark .rp-step-card,
