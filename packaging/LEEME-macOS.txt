@@ -1,49 +1,58 @@
 RetroPerfect en macOS — cómo abrirlo la primera vez
 ====================================================
 
-Si al abrir RetroPerfect ves este aviso:
+Al abrir RetroPerfect por primera vez verás este aviso:
 
     "No se ha abierto RetroPerfect"
     "Apple no ha podido verificar que RetroPerfect no contenga software
      malicioso que pueda dañar tu Mac o comprometer tu privacidad."
 
-es lo normal y NO significa que la app tenga nada malo.
+Es normal y NO significa que la app tenga nada malo. Solo significa que no
+está firmada con una cuenta de desarrollador de Apple, que cuesta 99 $ al año.
+Este es un proyecto libre y gratuito, así que no la tiene.
 
-Qué está pasando
-----------------
-macOS marca todo lo que descargas con una "cuarentena". Para levantar esa
-marca automáticamente, la app tiene que estar firmada y notarizada por Apple,
-lo que exige una cuenta de pago de desarrollador (99 $/año). RetroPerfect es
-software libre y no la tiene, así que hay que quitar esa marca a mano una vez.
+Solo hay que autorizarla una vez. Son 4 clics.
 
-IMPORTANTE: en ese aviso pulsa "Aceptar". NO pulses "Trasladar a la Papelera",
-porque eso borra la aplicación.
 
-Solución (una sola vez, 10 segundos)
-------------------------------------
-1. Abre la app Terminal (Aplicaciones > Utilidades > Terminal).
+PASOS
+-----
 
-2. Escribe esto, SIN pulsar Intro todavía (ojo al espacio final):
+1. Arrastra RetroPerfect.app a tu carpeta de Aplicaciones (opcional pero
+   recomendable) y ábrela con doble clic.
 
-       xattr -dr com.apple.quarantine
+2. Cuando salga el aviso de arriba, pulsa "Aceptar".
 
-3. Arrastra la carpeta RetroPerfect desde el Finder hasta la ventana de
-   Terminal: se escribirá sola su ruta. Ahora sí, pulsa Intro.
+   *** MUY IMPORTANTE ***
+   NO pulses "Trasladar a la Papelera", aunque sea el botón azul destacado:
+   ese botón borra la aplicación.
 
-   Te quedará una línea parecida a esta:
+3. Abre Ajustes del Sistema > Privacidad y seguridad.
+   Baja hasta abajo: verás un mensaje que dice
+   "Se ha bloqueado el uso de RetroPerfect porque no es de un desarrollador
+   identificado", con un botón "Abrir de todos modos". Púlsalo.
 
-       xattr -dr com.apple.quarantine /Users/tunombre/Downloads/RetroPerfect
+4. Confirma con Touch ID o tu contraseña, y pulsa "Abrir" en el último aviso.
 
-4. Ya está. Abre RetroPerfect normalmente con doble clic. La interfaz se abre
-   en tu navegador, en http://127.0.0.1:8080
+Ya está. RetroPerfect se abre en tu navegador (http://127.0.0.1:8080).
+A partir de ahora se abre con doble clic normal, sin ningún aviso.
 
-Esto solo hay que hacerlo una vez por cada descarga nueva.
 
-Alternativa sin binario (si tienes Python 3.11 o superior)
+ATAJO PARA QUIEN USE LA TERMINAL
+--------------------------------
+Hace lo mismo en un solo paso. Abre Terminal, escribe esto SIN pulsar Intro
+(atención al espacio del final):
+
+    xattr -dr com.apple.quarantine
+
+y arrastra la carpeta de RetroPerfect desde el Finder hasta la ventana de
+Terminal: se escribirá sola su ruta. Ahora pulsa Intro y abre la app.
+
+
+ALTERNATIVA SIN AVISOS (si tienes Python 3.11 o superior)
 ----------------------------------------------------------
-Instalado con pip no hay cuarentena ninguna, así que no aparece ningún aviso:
+Instalada con pip no hay cuarentena ni avisos de ningún tipo:
 
     pip install git+https://github.com/ruvelro/RetroPerfect
     retroperfect gui
 
-Más información: https://github.com/ruvelro/RetroPerfect
+Más información y ayuda: https://github.com/ruvelro/RetroPerfect

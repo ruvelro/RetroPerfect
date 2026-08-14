@@ -13,7 +13,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          # 22.04 a propósito: PyInstaller no empaqueta glibc, así que el binario
+          # exige la del runner. Compilar en 24.04 pedía glibc 2.38 y rompía en
+          # Ubuntu 22.04 LTS, Debian 12 y derivadas.
+          - os: ubuntu-22.04
             asset: RetroPerfect-linux
           - os: macos-latest
             asset: RetroPerfect-macos
@@ -28,13 +31,20 @@ jobs:
           cache: pip
       - name: Install
         run: pip install -e . pyinstaller
-      - name: Package (onedir)
-        run: nicegui-pack --onedir --name RetroPerfect scripts/retroperfect_app.py
-      - name: Instrucciones de macOS
+      - name: Empaquetar .app y comprimir (macOS)
         if: runner.os == 'macOS'
-        run: cp packaging/LEEME-macOS.txt dist/RetroPerfect/
-      - name: Zip
-        run: python -c "import shutil; shutil.make_archive('${{ matrix.asset }}', 'zip', 'dist', 'RetroPerfect')"
+        run: |
+          nicegui-pack --onedir --windowed --name RetroPerfect scripts/retroperfect_app.py
+          mkdir -p dist/RetroPerfect-macos
+          mv dist/RetroPerfect.app dist/RetroPerfect-macos/
+          cp packaging/LEEME-macOS.txt dist/RetroPerfect-macos/
+          # ditto, no zip: preserva symlinks, permisos y la firma ad-hoc del bundle.
+          ditto -c -k --sequesterRsrc --keepParent dist/RetroPerfect-macos ${{ matrix.asset }}.zip
+      - name: Empaquetar y comprimir (Windows y Linux)
+        if: runner.os != 'macOS'
+        run: |
+          nicegui-pack --onedir --name RetroPerfect scripts/retroperfect_app.py
+          python -c "import shutil; shutil.make_archive('${{ matrix.asset }}', 'zip', 'dist', 'RetroPerfect')"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}

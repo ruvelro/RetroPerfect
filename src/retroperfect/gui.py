@@ -171,7 +171,9 @@ def build_ui() -> None:
         ctx.platform_select.on_value_change(lambda event: switch_platform(event.value))
 
 
-def run(host: str = "127.0.0.1", port: int = 8080) -> None:
+def run(host: str = "127.0.0.1", port: int = 8080, show: bool = False) -> None:
+    """Arranca la interfaz local. `show` abre el navegador automáticamente: lo usa la
+    app empaquetada, que no tiene terminal donde mostrar la URL."""
     app.config.socket_io_js_transports = ["polling", "websocket"]
     ui.run(
         build_ui,
@@ -179,7 +181,7 @@ def run(host: str = "127.0.0.1", port: int = 8080) -> None:
         port=port,
         title="RetroPerfect",
         reload=False,
-        show=False,
+        show=show,
         reconnect_timeout=30.0,
         message_history_length=5000,
         uvicorn_logging_level="info",

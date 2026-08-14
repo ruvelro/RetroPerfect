@@ -33,33 +33,66 @@ Tu colección son años de trabajo. RetroPerfect está diseñado para no perder 
 
 ## Instalación
 
-**Sin Python** — descarga el ZIP de tu sistema (Windows, macOS o Linux) desde [Releases](https://github.com/ruvelro/RetroPerfect/releases), descomprímelo y ejecuta `RetroPerfect`. Se abre la interfaz en tu navegador.
+Hay dos formas. Si ya tienes Python, la segunda es más cómoda porque no da ningún aviso de seguridad.
 
-<details>
-<summary><b>macOS: "Apple no ha podido verificar que RetroPerfect no contenga software malicioso"</b> — cómo abrirlo</summary>
+### Opción A · Descargar la app (sin Python)
 
-macOS marca con *cuarentena* todo lo que descargas. Quitar esa marca automáticamente exige firmar y notarizar la app con una cuenta de desarrollador de Apple de pago (99 $/año), que este proyecto no tiene. La app no tiene nada malo: solo no está notarizada.
+Descarga el ZIP de tu sistema desde **[Releases](https://github.com/ruvelro/RetroPerfect/releases)** y sigue los pasos de tu sistema. La primera vez macOS y Windows piden autorizar la app: es porque no está firmada digitalmente (firmar cuesta entre 99 y 400 $ al año, ver [Hoja de ruta](#hoja-de-ruta)). No es un problema de la app.
 
-En el aviso pulsa **Aceptar** (nunca "Trasladar a la Papelera", que la borra) y ejecuta esto una vez, sustituyendo la ruta por la de tu carpeta descargada:
+<details open>
+<summary><b>🍎 macOS</b> · primera vez: 4 clics</summary>
 
-```bash
-xattr -dr com.apple.quarantine ~/Downloads/RetroPerfect
-```
+1. Descomprime el ZIP y arrastra **RetroPerfect.app** a tu carpeta de Aplicaciones.
+2. Doble clic. Aparecerá el aviso *"No se ha abierto RetroPerfect. Apple no ha podido verificar…"*.
+   👉 Pulsa **Aceptar**. **Nunca pulses "Trasladar a la Papelera"**: eso borra la app.
+3. Abre **Ajustes del Sistema → Privacidad y seguridad** y baja hasta el aviso *"Se ha bloqueado el uso de RetroPerfect…"*. Pulsa **Abrir de todos modos**.
+4. Confirma con Touch ID o tu contraseña y pulsa **Abrir**.
 
-Truco: escribe `xattr -dr com.apple.quarantine ` en Terminal y arrastra la carpeta desde el Finder para que se escriba sola la ruta. Después, doble clic normal.
+Listo: se abre la interfaz en tu navegador. A partir de ahí, doble clic normal y sin avisos.
 
-Hay que repetirlo con cada descarga nueva. Si prefieres no tocar la terminal cada vez, instálalo con `pip` (abajo): así no hay cuarentena ni avisos.
+*Atajo si usas la Terminal:* `xattr -dr com.apple.quarantine` seguido de un espacio y la carpeta arrastrada desde el Finder. Hace lo mismo en un paso.
+
+*¿Por qué?* macOS marca con "cuarentena" todo lo descargado. Levantar esa marca automáticamente requiere notarizar la app con una cuenta de desarrollador de Apple de pago (99 $/año) que este proyecto no tiene.
 
 </details>
 
-**Con Python** (3.11 o superior) — sin avisos de Gatekeeper en ningún sistema:
+<details>
+<summary><b>🪟 Windows</b> · primera vez: 2 clics</summary>
+
+1. Clic derecho en el ZIP → **Extraer todo**.
+2. Doble clic en **RetroPerfect.exe**.
+3. Si aparece *"Windows protegió tu PC"*, pulsa **Más información** → **Ejecutar de todas formas**.
+
+Si tu antivirus se queja, es un falso positivo habitual con aplicaciones Python empaquetadas; puedes comprobar el código fuente completo en este repositorio.
+
+</details>
+
+<details>
+<summary><b>🐧 Linux</b> · directo, sin avisos</summary>
+
+```bash
+unzip RetroPerfect-linux.zip
+cd RetroPerfect
+chmod +x RetroPerfect   # solo si tu descompresor perdió los permisos
+./RetroPerfect
+```
+
+Necesita **glibc 2.35 o superior** (Ubuntu 22.04+, Debian 12+, Fedora 36+). Si ves un error tipo `GLIBC_2.xx not found`, tu distribución es más antigua: usa la Opción B.
+
+</details>
+
+### Opción B · Instalar con Python (3.11 o superior)
+
+Un comando, sin avisos de seguridad en ningún sistema:
 
 ```bash
 pip install git+https://github.com/ruvelro/RetroPerfect
 retroperfect gui
 ```
 
-**Para desarrollar** (3.11 o superior):
+Si usas [pipx](https://pipx.pypa.io), `pipx install git+https://github.com/ruvelro/RetroPerfect` lo deja aislado y con el comando `retroperfect` disponible en todo el sistema.
+
+### Para desarrollar (3.11 o superior)
 
 ```bash
 git clone https://github.com/ruvelro/RetroPerfect.git
@@ -154,23 +187,32 @@ IPS, BPS, UPS, PPF 2.0/3.0 y xdelta/VCDIFF, sueltos o dentro de ZIP, con verific
 
 ## Aplicación de escritorio
 
-Cada tag `v*` publica automáticamente ZIPs para Windows, macOS y Linux en [Releases](https://github.com/ruvelro/RetroPerfect/releases). Para construirla localmente:
+Cada tag `v*` publica automáticamente los paquetes de Windows, macOS y Linux en [Releases](https://github.com/ruvelro/RetroPerfect/releases): un `.app` en macOS y una carpeta con el ejecutable en el resto. Para construirlo localmente:
 
 ```bash
-./scripts/build-app.sh            # carpeta dist/RetroPerfect/ + zip (arranque instantáneo)
-./scripts/build-app.sh --onefile  # ejecutable único (arranca más lento)
+./scripts/build-app.sh
 ```
 
 ## Desarrollo
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 100 tests
+pytest -q            # 108 tests
 ruff check src tests # lint
 mypy                 # type-checking estricto en verde
 ```
 
 La CI ejecuta las tres cosas en Python 3.11, 3.12 y 3.13.
+
+## Hoja de ruta
+
+**Distribución más cómoda** (evita los avisos de seguridad de la primera ejecución):
+
+- **Publicar en PyPI** para que baste `pipx install retroperfect`, sin clonar ni pegar URLs de GitHub. Requiere una cuenta de PyPI y un token guardado como secreto del repositorio; el workflow de publicación se añadiría al de release.
+- **Tap de Homebrew** (`brew install ruvelro/retroperfect/retroperfect`), como fórmula de Python: al compilarse en local no pasa por Gatekeeper, así que no da ningún aviso y sirve para macOS y Linux. Lo natural es hacerlo después de PyPI, porque entonces la fórmula se genera casi sola con `brew update-python-resources`. Entrar en el repositorio oficial de Homebrew exige unos mínimos de popularidad, así que el primer paso es un tap propio.
+- **Firmar y notarizar los binarios** eliminaría los avisos de macOS y Windows, pero es la única vía de pago: unos 99 $/año en Apple y entre 200 y 400 $/año un certificado para Windows.
+
+**Funcionalidad**: hash de RetroAchievements para CHD y CDI (falta un lector mantenido de esos formatos), parches RUP, y firma de los binarios en la propia CI.
 
 ## Aviso
 
