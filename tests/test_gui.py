@@ -81,3 +81,18 @@ async def test_gui_verify_tab_audits_scan(user: User, tmp_path) -> None:
         if {column["name"] for column in element.columns} == {"status", "title", "detail"}
     )
     assert any(row["title"] == "Perdido" and row["status"] == "FALTA" for row in issues_table.rows)
+
+
+async def test_gui_quit_button_asks_confirmation(user: User) -> None:
+    await user.open("/")
+    user.find("Salir").click()
+    await user.should_see("Se detendrá el servidor local")
+
+
+async def test_gui_quit_button_warns_about_work_in_progress(user: User) -> None:
+    from retroperfect.gui_state import busy
+
+    await user.open("/")
+    with busy("aplicando el manifiesto"):
+        user.find("Salir").click()
+        await user.should_see("Hay una operación en curso (aplicando el manifiesto)")

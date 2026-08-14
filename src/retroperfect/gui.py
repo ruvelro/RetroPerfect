@@ -10,7 +10,8 @@ from nicegui import app, ui
 from .dat_sources import list_dat_sources
 from .gui_context import UiContext
 from .gui_rows import _dat_rows, _page_class, _ra_status_label
-from .gui_state import AppState, _current_platform, _online_dat_rows, reset_state, state
+from .gui_shutdown import busy_reason, install_idle_shutdown, request_shutdown
+from .gui_state import AppState, _current_platform, _log_activity, _online_dat_rows, reset_state, state
 from .gui_tabs import activity, dats, decisions, plan, profile, scan, setup, summary, verify
 from .gui_tabs import platform as platform_tab_module
 from .gui_widgets import GLOBAL_CSS, _install_local_reconnect_guard
@@ -53,6 +54,31 @@ def build_ui() -> None:
                 theme_button.update()
 
             theme_button.on_click(toggle_theme)
+
+            quit_dialog = ui.dialog()
+            with quit_dialog, ui.card().classes("w-[460px] max-w-[95vw]"):
+                ui.label("Cerrar RetroPerfect").classes("text-lg font-semibold")
+                quit_message = ui.label().classes("text-sm text-gray-700")
+                with ui.row().classes("justify-end w-full"):
+                    ui.button("Cancelar", icon="close", on_click=quit_dialog.close).props("flat")
+
+                    async def confirm_quit() -> None:
+                        quit_dialog.close()
+                        _log_activity("Cierre solicitado desde la interfaz", "INFO")
+                        await request_shutdown()
+
+                    ui.button("Cerrar", icon="power_settings_new", on_click=confirm_quit).props("color=negative")
+
+            def quit_click() -> None:
+                reason = busy_reason()
+                quit_message.text = (
+                    f"Hay una operación en curso ({reason}). Si cierras ahora quedará a medias. ¿Cerrar de todas formas?"
+                    if reason
+                    else "Se detendrá el servidor local y esta pestaña dejará de funcionar. Tu trabajo guardado no se pierde."
+                )
+                quit_dialog.open()
+
+            ui.button("Salir", icon="power_settings_new", on_click=quit_click).props("dense flat").classes("rp-theme-button")
 
     with ui.column().classes(_page_class()):
         with ui.tabs().classes("w-full") as tabs:
@@ -171,10 +197,16 @@ def build_ui() -> None:
         ctx.platform_select.on_value_change(lambda event: switch_platform(event.value))
 
 
-def run(host: str = "127.0.0.1", port: int = 8080, show: bool = False) -> None:
-    """Arranca la interfaz local. `show` abre el navegador automáticamente: lo usa la
-    app empaquetada, que no tiene terminal donde mostrar la URL."""
+def run(host: str = "127.0.0.1", port: int = 8080, show: bool = False, exit_on_idle: bool = False) -> None:
+    """Arranca la interfaz local.
+
+    `show` abre el navegador automáticamente y `exit_on_idle` cierra la aplicación
+    cuando no queda ningún navegador conectado: los usa la app empaquetada, que no
+    tiene terminal ni icono en el Dock donde ver la URL o terminar el proceso.
+    """
     app.config.socket_io_js_transports = ["polling", "websocket"]
+    if exit_on_idle:
+        install_idle_shutdown()
     ui.run(
         build_ui,
         host=host,

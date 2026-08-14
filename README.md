@@ -92,6 +92,15 @@ retroperfect gui
 
 Si usas [pipx](https://pipx.pypa.io), `pipx install git+https://github.com/ruvelro/RetroPerfect` lo deja aislado y con el comando `retroperfect` disponible en todo el sistema.
 
+### Cerrar la aplicación
+
+RetroPerfect es un servidor local, así que cerrar la pestaña del navegador no basta por sí solo. Tienes dos formas, y ninguna necesita el Monitor de Actividad ni el Administrador de tareas:
+
+- **Botón "Salir"** arriba a la derecha: cierra el programa del todo. Si hay un escaneo o una copia en marcha, avisa antes de cortarla.
+- **Automático**: si cierras la pestaña y no vuelves, la aplicación se apaga sola al cabo de un minuto. Nunca lo hace mientras haya una operación en curso.
+
+Si la lanzas desde la terminal con `retroperfect gui`, el apagado automático viene desactivado (para que no se cierre sola mientras trasteas) y puedes activarlo con `--exit-on-idle`.
+
 ### Para desarrollar (3.11 o superior)
 
 ```bash

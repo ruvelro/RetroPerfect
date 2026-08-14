@@ -1,6 +1,8 @@
 """Estado global de la GUI y helpers que dependen de él."""
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
@@ -31,9 +33,25 @@ class AppState:
     ra_details_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "updated": 0, "running": False})
     dark_mode: bool = False
     activity: list[dict[str, str]] = field(default_factory=list)
+    # Operaciones largas en curso; impiden el apagado automático por inactividad.
+    busy_operations: dict[str, int] = field(default_factory=dict)
 
 
 state = AppState()
+
+
+@contextmanager
+def busy(label: str) -> Iterator[None]:
+    """Marca una operación larga en curso para que la app no se cierre sola."""
+    state.busy_operations[label] = state.busy_operations.get(label, 0) + 1
+    try:
+        yield
+    finally:
+        remaining = state.busy_operations.get(label, 1) - 1
+        if remaining > 0:
+            state.busy_operations[label] = remaining
+        else:
+            state.busy_operations.pop(label, None)
 
 
 

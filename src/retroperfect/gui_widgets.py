@@ -209,6 +209,8 @@ def _install_local_reconnect_guard() -> None:
           };
 
           const scheduleReload = () => {
+            // Cierre intencionado desde el botón Salir: no reintentar.
+            if (window.__retroperfectQuitting) return;
             hidePopup();
             if (reloadTimer !== null) return;
             reloadTimer = window.setTimeout(async () => {
@@ -250,6 +252,7 @@ def _install_local_reconnect_guard() -> None:
           }, 250);
 
           window.addEventListener('online', () => {
+            if (window.__retroperfectQuitting) return;
             if (reloadTimer !== null) window.location.reload();
           });
         })();

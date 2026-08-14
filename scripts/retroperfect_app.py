@@ -10,5 +10,6 @@ multiprocessing.freeze_support()
 from retroperfect.gui import run  # noqa: E402
 
 if __name__ == "__main__":
-    # show=True porque la app empaquetada no tiene terminal donde leer la URL.
-    run(show=True)
+    # La app empaquetada no tiene terminal donde leer la URL ni donde cortar el
+    # proceso: abre el navegador sola y se cierra cuando dejas de usarla.
+    run(show=True, exit_on_idle=True)

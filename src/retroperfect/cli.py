@@ -341,11 +341,15 @@ def trash_empty(confirm: Annotated[bool, typer.Option("--confirm/--no-confirm")]
 
 
 @app.command()
-def gui(host: str = "127.0.0.1", port: int = 8080) -> None:
+def gui(
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    exit_on_idle: Annotated[bool, typer.Option("--exit-on-idle/--no-exit-on-idle", help="Cierra la aplicación cuando no queda ningún navegador conectado.")] = False,
+) -> None:
     """Arranca la interfaz local NiceGUI."""
     from .gui import run
 
-    run(host=host, port=port)
+    run(host=host, port=port, exit_on_idle=exit_on_idle)
 
 
 if __name__ == "__main__":

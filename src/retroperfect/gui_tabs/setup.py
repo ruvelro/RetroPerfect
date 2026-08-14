@@ -18,7 +18,7 @@ from ..gui_rows import (
     _ra_status_label,
     _source_suffixes,
 )
-from ..gui_state import _current_platform, _log_activity, state
+from ..gui_state import _current_platform, _log_activity, busy, state
 from ..gui_widgets import _path_picker
 from ..models import SelectionProfile
 from ..platforms import platform_spec
@@ -204,7 +204,8 @@ def build(ctx: UiContext) -> None:
                     save_credentials(username.value, api_key.value)
                     platform = _current_platform()
                     ra_status.text = "Sincronizando hashes RA..."
-                    count = await asyncio.to_thread(sync_ra_hashes, platform, username.value, api_key.value)
+                    with busy("sincronización de hashes RetroAchievements"):
+                        count = await asyncio.to_thread(sync_ra_hashes, platform, username.value, api_key.value)
                     ra_status.text = f"Listo: {count} hashes RA cacheados."
                     ra_cache_status.text = _ra_status_label(platform)
                     ctx.refresh_header_status()

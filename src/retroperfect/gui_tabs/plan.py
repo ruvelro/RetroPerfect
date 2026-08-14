@@ -18,7 +18,7 @@ from ..gui_rows import (
     _ra_conflict_rows,
     _scan_group_sample,
 )
-from ..gui_state import _log_activity, state
+from ..gui_state import _log_activity, busy, state
 from ..gui_widgets import _open_path
 from ..manifest_io import apply_manifest, preflight_manifest, report_manifest, save_manifest
 from ..models import ActionMode
@@ -104,7 +104,8 @@ def build(ctx: UiContext) -> None:
                         safety_dialog.close()
                         return
                     try:
-                        completed = await asyncio.to_thread(apply_manifest, manifest, None, True)  # type: ignore[arg-type]
+                        with busy("aplicando el manifiesto"):
+                            completed = await asyncio.to_thread(apply_manifest, manifest, None, True)  # type: ignore[arg-type]
                         plan_status.text = f"Aplicadas {len(completed)} operaciones."
                         safety_dialog.close()
                     except Exception as exc:

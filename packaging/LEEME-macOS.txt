@@ -37,6 +37,13 @@ Ya está. RetroPerfect se abre en tu navegador (http://127.0.0.1:8080).
 A partir de ahora se abre con doble clic normal, sin ningún aviso.
 
 
+CÓMO CERRARLO
+-------------
+Usa el botón "Salir" de arriba a la derecha. Si simplemente cierras la
+pestaña del navegador, la aplicación se apaga sola al cabo de un minuto.
+No hace falta ir al Monitor de Actividad.
+
+
 ATAJO PARA QUIEN USE LA TERMINAL
 --------------------------------
 Hace lo mismo en un solo paso. Abre Terminal, escribe esto SIN pulsar Intro

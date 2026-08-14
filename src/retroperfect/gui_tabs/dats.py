@@ -16,7 +16,7 @@ from ..gui_rows import (
     _direct_dat_batch_candidates,
     _panel_class,
 )
-from ..gui_state import _current_platform, _log_activity, _online_dat_rows
+from ..gui_state import _current_platform, _log_activity, _online_dat_rows, busy
 from ..gui_widgets import _path_picker
 from ..platforms import platform_spec
 
@@ -89,7 +89,8 @@ def build(ctx: UiContext) -> None:
 
         async def update_dats_click() -> None:
             dat_manager_status.text = "Re-descargando DATs instalados de fuentes directas..."
-            results = await asyncio.to_thread(update_installed_dats)
+            with busy("actualización de DATs"):
+                results = await asyncio.to_thread(update_installed_dats)
             if not results:
                 dat_manager_status.text = "No hay DATs de fuentes directas que actualizar."
                 return
@@ -148,7 +149,8 @@ def build(ctx: UiContext) -> None:
                 source_item = next(item for item in DAT_SOURCES if item.id == source_id)
                 batch_progress.value = (index - 1) / len(source_ids)
                 try:
-                    imported = await asyncio.to_thread(download_and_import_source, source_id)
+                    with busy("descarga de DATs por lote"):
+                        imported = await asyncio.to_thread(download_and_import_source, source_id)
                     imported_total += len(imported)
                     rows[index - 1]["status"] = f"OK ({len(imported)})"
                     dat_manager_status.text = f"Descargado {index}/{len(source_ids)}: {source_item.label}"
