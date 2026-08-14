@@ -181,6 +181,7 @@ Hay tres tipos de fuente:
 | `http_index` | URL de un autoíndice de Apache/nginx | empareja por nombre; la verificación sigue siendo por hash tras descargar |
 | `local_dir` | carpeta local, NAS o unidad de red montada | ideal para restaurar desde tu propia copia de seguridad |
 | `zip_index` | ruta o URL de un ZIP que contiene el set | lee su índice **sin descargarlo entero** y extrae solo los juegos que faltan |
+| `torrent` | archivo `.torrent` | la descarga la hace tu cliente; RetroPerfect elige qué archivos y verifica lo que llega |
 
 ```bash
 # Registra una fuente (aquí, tu backup en el NAS)
@@ -214,6 +215,32 @@ retroperfect rom-source-add --id set --label "Set completo" --kind zip_index \
 ```
 
 Requiere que el servidor admita descargas parciales (`Accept-Ranges: bytes`); si no, lo dice claramente en vez de bajarse el archivo entero por sorpresa. Con un ZIP en disco o en el NAS funciona igual pasando su ruta.
+
+#### Torrent
+
+Un `.torrent` lleva dentro su lista de archivos, así que sirve de índice sin descargar nada ni conectarse a nadie. Y BitTorrent permite descargar solo algunos archivos de un torrent, que es exactamente lo que hace falta.
+
+RetroPerfect **no descarga el torrent**: eso lo hace tu cliente. Lo que aporta es elegir qué archivos y verificar lo que llega.
+
+```bash
+# Ver qué archivos del torrent te faltan (no toca nada)
+retroperfect torrent-queue --torrent set.torrent --dat nes.dat --scan .retroperfect/scans/latest.json
+
+# Con qBittorrent: lo añade con solo esos archivos seleccionados
+retroperfect torrent-queue --torrent set.torrent --dat nes.dat \
+  --scan .retroperfect/scans/latest.json --queue
+
+# Con cualquier cliente: cuando termine, verifica y copia al romset
+retroperfect torrent-collect --torrent set.torrent --dat nes.dat \
+  --downloads ~/Descargas/torrents --dest ./romset
+```
+
+Con **qBittorrent** la selección es automática vía su Web API (actívala en sus ajustes). Con **cualquier otro cliente** —Transmission, Deluge, rTorrent…— el flujo es el mismo: `torrent-queue` te dice qué archivos marcar, los marcas a mano, y `torrent-collect` hace el resto sin saber ni preguntar quién lo descargó. Si tu qBittorrent pide credenciales, pásalas por las variables `RETROPERFECT_QBT_USER` y `RETROPERFECT_QBT_PASS`; no se guardan en ningún archivo.
+
+Dos detalles que conviene saber:
+
+- **No apuntes tu cliente al romset.** `torrent-collect` **copia**, no mueve, precisamente para que el cliente siga sembrando desde su carpeta, y para que en tu colección solo entre lo verificado. Los archivos a medias se detectan por tamaño y los que no cuadran con el DAT no pasan.
+- Un torrent se divide en **piezas** de tamaño fijo, y una pieza puede cruzar dos archivos. Si una ROM que quieres comparte pieza con una que no, bajarás de propina ese trozo del vecino. Poco, pero no exactamente cero.
 
 ### Papelera
 

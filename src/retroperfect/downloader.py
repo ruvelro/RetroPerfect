@@ -38,6 +38,9 @@ STATUS_LABELS = {
     "mismatch": "No coincide con el DAT (en cuarentena)",
     "error": "Error de descarga",
     "cancelled": "Cancelado",
+    "delegated": "Lo descarga tu cliente de torrent",
+    "incomplete": "Aún no ha terminado de descargarse",
+    "absent": "No aparece en la carpeta de descargas",
 }
 
 
@@ -127,6 +130,82 @@ def run_download_plan(
     return report
 
 
+def collect_downloads(
+    plan: DownloadPlan,
+    source_dir: Path,
+    destination: Path,
+    *,
+    dat_index: DatIndex | None = None,
+    progress: ProgressCallback | None = None,
+    state_base: Path | None = None,
+) -> DownloadReport:
+    """Recoge de la carpeta de un cliente de torrent lo que ya esté completo.
+
+    Verifica contra el DAT y **copia** al romset en vez de mover: si se moviera,
+    el cliente daría el archivo por perdido y dejaría de sembrarlo.
+    """
+    destination.mkdir(parents=True, exist_ok=True)
+    report = DownloadReport()
+    total = len(plan.candidates)
+
+    for index, candidate in enumerate(plan.candidates, start=1):
+        if progress:
+            progress({"phase": "collect", "current": index, "total": total, "title": candidate.title, "file": candidate.file_name})
+        target = destination / candidate.file_name
+        if target.exists():
+            report.outcomes.append(
+                DownloadOutcome(title=candidate.title, file_name=candidate.file_name, status="present", detail="Ya existe en el destino.", path=str(target))
+            )
+            continue
+        found = _locate_download(source_dir, candidate)
+        if found is None:
+            report.outcomes.append(DownloadOutcome(title=candidate.title, file_name=candidate.file_name, status="absent"))
+            continue
+        if candidate.size and found.stat().st_size != candidate.size:
+            report.outcomes.append(
+                DownloadOutcome(
+                    title=candidate.title,
+                    file_name=candidate.file_name,
+                    status="incomplete",
+                    detail=f"{found.stat().st_size} de {candidate.size} bytes.",
+                    path=str(found),
+                )
+            )
+            continue
+        problem = _verify_against_dat(found, candidate, dat_index, plan.platform) if dat_index else None
+        if problem:
+            report.outcomes.append(DownloadOutcome(title=candidate.title, file_name=candidate.file_name, status="mismatch", detail=problem, path=str(found)))
+            continue
+        shutil.copy2(found, target)
+        report.outcomes.append(
+            DownloadOutcome(title=candidate.title, file_name=candidate.file_name, status="ok", path=str(target), bytes_downloaded=target.stat().st_size)
+        )
+
+    if progress:
+        progress({"phase": "done", "current": total, "total": total, "title": "", "file": ""})
+    return report
+
+
+def _locate_download(source_dir: Path, candidate: DownloadCandidate) -> Path | None:
+    """Busca el archivo en la carpeta del cliente, con o sin la carpeta del torrent.
+
+    No hace falta filtrar los archivos a medias: los que preasignan tamaño los
+    caza la verificación contra el DAT, y los demás no llegan al tamaño esperado.
+    """
+    candidates = []
+    if candidate.inner_path:
+        candidates.append(source_dir / candidate.inner_path)
+    candidates.append(source_dir / candidate.file_name)
+    for path in candidates:
+        if path.is_file():
+            return path
+    # Algunos clientes guardan todo plano, o dentro de una carpeta con otro nombre.
+    matches = [path for path in source_dir.rglob(candidate.file_name) if path.is_file()]
+    if matches:
+        return matches[0]
+    return None
+
+
 def _process_candidate(
     candidate: DownloadCandidate,
     *,
@@ -138,8 +217,15 @@ def _process_candidate(
     state_base: Path | None,
 ) -> DownloadOutcome:
     staged = staging / candidate.file_name
+    if candidate.container == "torrent":
+        return DownloadOutcome(
+            title=candidate.title,
+            file_name=candidate.file_name,
+            status="delegated",
+            detail="Añádelo a tu cliente y luego recoge lo descargado con `torrent-collect`.",
+        )
     try:
-        if candidate.inner_path:
+        if candidate.inner_path and candidate.container == "zip":
             downloaded = _extract_member(candidate.url, candidate.inner_path, staged)
         else:
             downloaded = _fetch(candidate.url, staged, cancelled=cancelled)

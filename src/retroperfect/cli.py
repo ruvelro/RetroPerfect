@@ -11,7 +11,7 @@ from .dat import DatIndex, parse_dat
 from .dat_manager import compare_dats, download_and_import_source, download_and_import_url, import_dat_file, list_installed_dats, validate_setup
 from .dat_sources import list_dat_sources
 from .download_plan import build_download_plan, human_size, resolve_remote_files
-from .downloader import run_download_plan
+from .downloader import collect_downloads, run_download_plan
 from .manifest_io import apply_manifest, load_manifest, report_manifest, save_manifest
 from .models import ActionMode, ExportLayout, OutputBucket, Platform
 from .paths import project_state_dir
@@ -22,6 +22,9 @@ from .rom_sources import SOURCE_KIND_LABELS, RomSource, add_rom_source, list_rom
 from .rules import build_manifest
 from .scanner import scan_directory
 from .storage import load_scan, save_scan
+from .torrent import read_torrent
+from .torrent_client import DEFAULT_URL as QBT_DEFAULT_URL
+from .torrent_client import QBittorrentClient, TorrentClientError, queue_plan
 
 app = typer.Typer(help="Herramientas RetroPerfect para curar colecciones de ROMs.")
 console = Console()
@@ -383,6 +386,79 @@ def download(
     console.print(f"Descargados {report.downloaded}, con problemas {report.failed}, total {human_size(report.total_bytes)}.")
     if report.failed:
         raise typer.Exit(code=1)
+
+
+@app.command("torrent-queue")
+def torrent_queue(
+    torrent: Annotated[Path, typer.Option("--torrent", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    dat: Annotated[Path, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    platform: Annotated[str, typer.Option("--platform")] = "nes",
+    scan: Annotated[Path | None, typer.Option("--scan", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    profile: Annotated[str, typer.Option("--profile")] = "default",
+    url: Annotated[str, typer.Option("--qbittorrent", help="URL de la Web UI de qBittorrent.")] = QBT_DEFAULT_URL,
+    save_path: Annotated[str | None, typer.Option("--save-path", help="Carpeta de descarga que usará el cliente.")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--queue", help="Solo muestra qué archivos se seleccionarían.")] = True,
+) -> None:
+    """Añade un .torrent a qBittorrent con solo los juegos que te faltan seleccionados."""
+    plan, info = _torrent_plan(torrent, dat, platform, scan, profile)
+    console.print(f"Torrent: [bold]{info.name}[/bold] · {len(info.files)} archivos · {human_size(info.total_size)}")
+    console.print(f"Te faltan {len(plan.candidates)} ({human_size(plan.total_bytes)}); el resto se deseleccionará.")
+    for candidate in plan.candidates[:20]:
+        console.print(f"  · {candidate.title} → {candidate.inner_path}")
+    if len(plan.candidates) > 20:
+        console.print(f"  … y {len(plan.candidates) - 20} más")
+    if dry_run:
+        console.print("[yellow]Simulación:[/yellow] repite con --queue para añadirlo a qBittorrent.")
+        console.print("Con otro cliente: añádelo a mano, selecciona esos archivos y luego usa `torrent-collect`.")
+        return
+    try:
+        result = queue_plan(plan, torrent, client=QBittorrentClient(url), save_path=save_path)
+    except TorrentClientError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]Añadido a qBittorrent:[/green] {result['seleccionados']} archivos activos, {result['descartados']} descartados.")
+    console.print("Cuando termine, recoge lo descargado con `torrent-collect`.")
+
+
+@app.command("torrent-collect")
+def torrent_collect(
+    torrent: Annotated[Path, typer.Option("--torrent", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    dat: Annotated[Path, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    downloads: Annotated[Path, typer.Option("--downloads", exists=True, file_okay=False, dir_okay=True, readable=True, help="Carpeta donde descarga tu cliente.")],
+    dest: Annotated[Path, typer.Option("--dest", help="Carpeta del romset donde instalar lo verificado.")],
+    platform: Annotated[str, typer.Option("--platform")] = "nes",
+    scan: Annotated[Path | None, typer.Option("--scan", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    profile: Annotated[str, typer.Option("--profile")] = "default",
+) -> None:
+    """Verifica lo que tu cliente ya descargó y lo copia al romset. Funciona con cualquier cliente."""
+    plan, _info = _torrent_plan(torrent, dat, platform, scan, profile)
+    report = collect_downloads(plan, downloads, dest, dat_index=DatIndex(parse_dat(dat)))
+    counts: dict[str, int] = {}
+    for outcome in report.outcomes:
+        counts[outcome.status] = counts.get(outcome.status, 0) + 1
+        if outcome.status in {"mismatch", "incomplete"}:
+            console.print(f"[yellow]{outcome.status_label}[/yellow] {outcome.file_name} {outcome.detail}")
+    pending = " · ".join(f"{status}: {count}" for status, count in sorted(counts.items()) if status != "ok")
+    console.print(f"[green]Instalados {report.downloaded}[/green] ({human_size(report.total_bytes)})" + (f" · {pending}" if pending else ""))
+    console.print("Se copia, no se mueve: tu cliente sigue sembrando desde su carpeta.")
+
+
+def _torrent_plan(torrent: Path, dat: Path, platform: str, scan: Path | None, profile: str):
+    """Plan acotado a los archivos de un .torrent concreto."""
+    parsed_platform = _platform(platform)
+    info = read_torrent(torrent)
+    source = RomSource(id=f"torrent-{torrent.stem}", label=torrent.name, kind="torrent", location=str(torrent), platform=parsed_platform.value)
+    remote_files, errors = resolve_remote_files([source], refresh=True)
+    for message in errors:
+        console.print(f"[red]{message}[/red]")
+    plan = build_download_plan(
+        parse_dat(dat),
+        load_scan(scan) if scan else None,
+        load_profile(profile),
+        remote_files,
+        platform=parsed_platform,
+    )
+    return plan, info
 
 
 @app.command("dat-list")

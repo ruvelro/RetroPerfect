@@ -21,14 +21,16 @@ from pydantic import BaseModel, Field
 from .http import http_get
 from .paths import config_dir, data_dir
 from .remote_zip import HttpRangeReader
+from .torrent import read_torrent
 
-SourceKind = Literal["archive_org", "http_index", "local_dir", "zip_index"]
+SourceKind = Literal["archive_org", "http_index", "local_dir", "zip_index", "torrent"]
 
 SOURCE_KIND_LABELS: dict[str, str] = {
     "archive_org": "Ítem de archive.org (trae hashes: verificación fiable)",
     "http_index": "Índice HTTP (autoíndice de Apache/nginx)",
     "local_dir": "Carpeta local o unidad de red montada",
     "zip_index": "ZIP con el set dentro, local o por URL (lee su índice sin bajarlo entero)",
+    "torrent": "Archivo .torrent (la descarga la hace tu cliente; RetroPerfect verifica e instala)",
 }
 
 # Los índices remotos cambian poco y algunos tienen miles de entradas: se cachean
@@ -64,6 +66,9 @@ class RemoteFile(BaseModel):
     # Cuando el archivo vive dentro de un contenedor, `url` apunta al contenedor
     # y esto a la ruta interna que hay que extraer.
     inner_path: str | None = None
+    # Qué clase de contenedor: "zip" se extrae aquí mismo; "torrent" no se
+    # descarga desde la app, lo entrega el cliente del usuario.
+    container: str | None = None
 
 
 class RemoteIndex(BaseModel):
@@ -180,6 +185,8 @@ def _fetch_files(source: RomSource) -> list[RemoteFile]:
         return _fetch_local_dir(source.location)
     if source.kind == "zip_index":
         return _fetch_zip_index(source.location)
+    if source.kind == "torrent":
+        return _fetch_torrent(source.location)
     raise ValueError(f"Tipo de fuente no soportado: {source.kind}")
 
 
@@ -265,12 +272,27 @@ def _fetch_zip_index(location: str) -> list[RemoteFile]:
                 name=Path(info.filename).name,
                 url=location,
                 inner_path=info.filename,
+                container="zip",
                 size=info.file_size,
                 crc32=f"{info.CRC & 0xFFFFFFFF:08x}",
             )
             for info in archive.infolist()
             if not info.is_dir() and not Path(info.filename).name.startswith(".")
         ]
+
+
+def _fetch_torrent(location: str) -> list[RemoteFile]:
+    """El .torrent trae la lista de archivos; los hashes de BitTorrent son por
+    pieza y no por archivo, así que el emparejamiento va por nombre y la
+    verificación la sigue haciendo el DAT cuando el archivo aterriza."""
+    path = Path(location[7:] if location.startswith("file://") else location).expanduser()
+    if not path.is_file():
+        raise RuntimeError(f"El archivo .torrent '{path}' no existe o no es accesible.")
+    info = read_torrent(path)
+    return [
+        RemoteFile(name=item.name, url=location, inner_path=item.path, container="torrent", size=item.length)
+        for item in info.files
+    ]
 
 
 def _open_zip(location: str) -> zipfile.ZipFile:
