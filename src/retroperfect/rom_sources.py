@@ -94,6 +94,28 @@ def add_rom_source(source: RomSource) -> RomSource:
     return source
 
 
+def set_rom_source_enabled(source_id: str, enabled: bool) -> RomSource:
+    """Activa o silencia una fuente sin perder su configuración (espejo caído, por ejemplo)."""
+    sources = list_rom_sources()
+    source = next((item for item in sources if item.id == source_id), None)
+    if source is None:
+        raise ValueError(f"Fuente de romsets desconocida: {source_id}")
+    source.enabled = enabled
+    save_rom_sources(sources)
+    return source
+
+
+def unique_source_id(base: str) -> str:
+    """Evita que dos fuentes con el mismo nombre se pisen en silencio."""
+    taken = {item.id for item in list_rom_sources()}
+    if base not in taken:
+        return base
+    index = 2
+    while f"{base}-{index}" in taken:
+        index += 1
+    return f"{base}-{index}"
+
+
 def remove_rom_source(source_id: str) -> bool:
     sources = list_rom_sources()
     remaining = [item for item in sources if item.id != source_id]

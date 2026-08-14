@@ -186,7 +186,8 @@ Hay tres tipos de fuente:
 retroperfect rom-source-add --id nas --label "Backup NAS" --kind local_dir \
   --location /Volumes/nas/roms/nes --platform nes
 
-retroperfect rom-sources          # lista las fuentes configuradas
+retroperfect rom-sources                      # lista las fuentes configuradas
+retroperfect rom-source-toggle nas --disable  # silencia un espejo caído sin borrarlo
 
 # Simula: qué falta y de dónde saldría (no descarga nada)
 retroperfect download --platform nes --dat nes.dat --scan .retroperfect/scans/latest.json
@@ -196,7 +197,9 @@ retroperfect download --platform nes --dat nes.dat --scan .retroperfect/scans/la
   --dest ./romset --confirm
 ```
 
-Sin `--confirm` solo se muestra el plan. `--all-variants` desactiva el filtro del perfil y planifica todas las variantes del DAT; `--limit N` acota la tanda; `--refresh` fuerza releer los índices remotos (se cachean 12 h). Las descargas HTTP se reanudan solas si se cortan, y respetan el `Retry-After` del servidor. En la GUI, todo esto vive en la pestaña **Descargar**.
+Sin `--confirm` solo se muestra el plan. `--all-variants` desactiva el filtro del perfil y planifica todas las variantes del DAT; `--limit N` acota la tanda; `--refresh` fuerza releer los índices remotos (se cachean 12 h). Las descargas HTTP se reanudan solas si se cortan, y respetan el `Retry-After` del servidor.
+
+En la GUI, todo esto vive en la pestaña **Descargar**: gestiona las fuentes, muestra el plan con una etiqueta de cómo se emparejó cada archivo (por hash, por nombre exacto o aproximado), lista aparte los juegos que ninguna fuente ofrece, y permite marcar filas para bajar solo esas.
 
 ### Papelera
 

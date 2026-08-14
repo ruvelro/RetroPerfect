@@ -18,7 +18,7 @@ from .paths import project_state_dir
 from .platforms import platform_options, platform_spec
 from .profile import load_profile
 from .ra import annotate_scan_with_ra, sync_ra_hashes, sync_ra_patch_details
-from .rom_sources import SOURCE_KIND_LABELS, RomSource, add_rom_source, list_rom_sources, remove_rom_source
+from .rom_sources import SOURCE_KIND_LABELS, RomSource, add_rom_source, list_rom_sources, remove_rom_source, set_rom_source_enabled
 from .rules import build_manifest
 from .scanner import scan_directory
 from .storage import load_scan, save_scan
@@ -294,6 +294,19 @@ def rom_source_add(
     console.print(f"[green]Fuente añadida[/green] {source.label} ({source.kind} → {source.location})")
 
 
+@app.command("rom-source-toggle")
+def rom_source_toggle(
+    source_id: Annotated[str, typer.Argument(help="ID de la fuente (ver rom-sources).")],
+    enable: Annotated[bool, typer.Option("--enable/--disable", help="Silencia la fuente sin borrarla.")] = True,
+) -> None:
+    """Activa o desactiva una fuente, útil cuando un espejo está caído."""
+    try:
+        source = set_rom_source_enabled(source_id, enable)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    console.print(f"[green]{'Activada' if source.enabled else 'Desactivada'}[/green] {source.label}")
+
+
 @app.command("rom-source-remove")
 def rom_source_remove(source_id: Annotated[str, typer.Argument(help="ID de la fuente (ver rom-sources).")]) -> None:
     """Elimina una fuente de romsets y su índice cacheado."""
@@ -329,6 +342,8 @@ def download(
     for message in errors:
         console.print(f"[red]Fuente no disponible:[/red] {message}")
     if not remote_files:
+        if not errors:
+            console.print("[yellow]Todas las fuentes de esta plataforma están desactivadas.[/yellow] Actívalas con rom-source-toggle.")
         raise typer.Exit(code=1)
 
     plan = build_download_plan(

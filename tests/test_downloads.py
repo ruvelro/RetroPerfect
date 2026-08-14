@@ -12,7 +12,16 @@ from retroperfect.dat import DatIndex, parse_logiqx_dat
 from retroperfect.download_plan import build_download_plan, resolve_remote_files
 from retroperfect.downloader import run_download_plan
 from retroperfect.models import OutputBucket, Platform, ProfileOutput, SelectionProfile
-from retroperfect.rom_sources import RemoteFile, RomSource, add_rom_source, list_rom_sources, remove_rom_source, resolve_source
+from retroperfect.rom_sources import (
+    RemoteFile,
+    RomSource,
+    add_rom_source,
+    list_rom_sources,
+    remove_rom_source,
+    resolve_source,
+    set_rom_source_enabled,
+    unique_source_id,
+)
 from retroperfect.scanner import scan_directory
 
 PROFILE = SelectionProfile(name="test", outputs=[ProfileOutput(bucket=OutputBucket.MAIN, strict_1g1r=True, region_priority=["Europe", "USA", "Japan"])])
@@ -514,3 +523,74 @@ def test_plan_counts_a_title_present_in_another_region_as_covered(tmp_path: Path
     plan = build_download_plan(parse_logiqx_dat(dat), scan, PROFILE, remote, platform=Platform.NES)
     assert plan.candidates == []
     assert plan.present_groups == 1
+
+
+def test_rom_source_can_be_disabled_without_losing_its_config(isolated_config: Path, tmp_path: Path) -> None:
+    folder = tmp_path / "mirror"
+    folder.mkdir()
+    (folder / "Uno.nes").write_bytes(b"A")
+    add_rom_source(RomSource(id="espejo", label="Espejo", kind="local_dir", location=str(folder), platform="nes"))
+
+    set_rom_source_enabled("espejo", False)
+    source = list_rom_sources()[0]
+    assert not source.enabled
+    assert source.location == str(folder)
+
+    files, errors = resolve_remote_files(list_rom_sources())
+    assert files == {} and errors == []
+
+    set_rom_source_enabled("espejo", True)
+    files, _ = resolve_remote_files(list_rom_sources())
+    assert list(files) == ["espejo"]
+
+
+def test_set_rom_source_enabled_rejects_unknown_ids(isolated_config: Path) -> None:
+    with pytest.raises(ValueError, match="desconocida"):
+        set_rom_source_enabled("no-existe", False)
+
+
+def test_unique_source_id_avoids_silently_overwriting(isolated_config: Path) -> None:
+    assert unique_source_id("espejo-nes") == "espejo-nes"
+    add_rom_source(RomSource(id="espejo-nes", label="Espejo", kind="local_dir", location="/a"))
+    assert unique_source_id("espejo-nes") == "espejo-nes-2"
+    add_rom_source(RomSource(id="espejo-nes-2", label="Espejo", kind="local_dir", location="/b"))
+    assert unique_source_id("espejo-nes") == "espejo-nes-3"
+
+
+def test_download_without_verification_installs_whatever_arrives(tmp_path: Path) -> None:
+    """verify=False se salta el DAT: existe para fuentes de confianza, y hay que poder demostrarlo."""
+    dat = _dat(tmp_path, {"Falta (Europe)": b"GOOD"})
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    (mirror / "Falta (Europe).nes").write_bytes(b"CONTENIDO-DISTINTO")
+    catalog = parse_logiqx_dat(dat)
+    remote = {"src": [RemoteFile(name="Falta (Europe).nes", url=str(mirror / "Falta (Europe).nes"))]}
+    plan = build_download_plan(catalog, None, PROFILE, remote, platform=Platform.NES)
+
+    dest = tmp_path / "romset"
+    report = run_download_plan(plan, dest, dat_index=DatIndex(catalog), verify=False, state_base=tmp_path)
+
+    assert report.downloaded == 1
+    assert (dest / "Falta (Europe).nes").read_bytes() == b"CONTENIDO-DISTINTO"
+
+
+def test_plan_counts_candidates_without_a_known_size(tmp_path: Path) -> None:
+    dat = _dat(tmp_path, {"Uno (Europe)": b"UNO", "Dos (Europe)": b"DOS"})
+    remote = {
+        "src": [
+            RemoteFile(name="Uno (Europe).nes", url="/m/1", size=10),
+            RemoteFile(name="Dos (Europe).nes", url="/m/2"),
+        ]
+    }
+
+    plan = build_download_plan(parse_logiqx_dat(dat), None, PROFILE, remote, platform=Platform.NES)
+    # El DAT declara el tamaño de sus ROMs, así que solo falta cuando ni índice ni DAT lo dan.
+    assert plan.unknown_size_count == 0
+    assert plan.total_bytes == 13
+
+
+def test_confidence_label_explains_each_match(tmp_path: Path) -> None:
+    dat = _dat(tmp_path, {"Juego (Europe)": b"EU"})
+    remote = {"src": [RemoteFile(name="Juego (Europe).nes", url="/m/eu")]}
+    plan = build_download_plan(parse_logiqx_dat(dat), None, PROFILE, remote, platform=Platform.NES)
+    assert plan.candidates[0].confidence_label == "Nombre idéntico al del DAT"

@@ -131,10 +131,11 @@ async def test_gui_download_tab_registers_a_source_from_the_form(user: User, tmp
     sources_table = next(
         element
         for element in user.find(ui.table).elements
-        if {column["name"] for column in element.columns} == {"label", "kind", "location", "platform"}
+        if {column["name"] for column in element.columns} == {"label", "kind", "location", "platform", "enabled"}
     )
     assert sources_table.rows[0]["label"] == "Mi carpeta"
     assert sources_table.rows[0]["kind"] == "local_dir"
+    assert sources_table.rows[0]["enabled"] == "sí"
 
 
 async def test_gui_download_tab_requires_a_source(user: User, tmp_path, monkeypatch) -> None:

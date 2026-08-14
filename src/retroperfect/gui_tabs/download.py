@@ -12,7 +12,7 @@ from ..downloader import run_download_plan
 from ..gui_context import UiContext
 from ..gui_rows import _panel_class
 from ..gui_state import _current_platform, _log_activity, busy, state
-from ..rom_sources import SOURCE_KIND_LABELS, RomSource, add_rom_source, list_rom_sources, remove_rom_source
+from ..rom_sources import SOURCE_KIND_LABELS, RomSource, add_rom_source, list_rom_sources, remove_rom_source, set_rom_source_enabled, unique_source_id
 
 
 def build(ctx: UiContext) -> None:
@@ -34,6 +34,7 @@ def build(ctx: UiContext) -> None:
                 {"name": "kind", "label": "Tipo", "field": "kind", "align": "left"},
                 {"name": "location", "label": "Origen", "field": "location", "align": "left"},
                 {"name": "platform", "label": "Plataforma", "field": "platform", "align": "center"},
+                {"name": "enabled", "label": "Activa", "field": "enabled", "align": "center"},
             ],
             rows=[],
             row_key="id",
@@ -51,7 +52,14 @@ def build(ctx: UiContext) -> None:
 
         def refresh_sources() -> None:
             sources_table.rows = [
-                {"id": source.id, "label": source.label, "kind": source.kind, "location": source.location, "platform": source.platform or "todas"}
+                {
+                    "id": source.id,
+                    "label": source.label,
+                    "kind": source.kind,
+                    "location": source.location,
+                    "platform": source.platform or "todas",
+                    "enabled": "sí" if source.enabled else "no",
+                }
                 for source in list_rom_sources()
             ]
             sources_table.update()
@@ -61,7 +69,7 @@ def build(ctx: UiContext) -> None:
                 status.text = "Indica un nombre y el origen (ítem de archive.org, URL del índice o carpeta)."
                 return
             platform = _current_platform().value if only_this_platform.value else None
-            source_id = _source_id(source_label.value, platform)
+            source_id = unique_source_id(_source_id(source_label.value, platform))
             add_rom_source(
                 RomSource(
                     id=source_id,
@@ -87,8 +95,19 @@ def build(ctx: UiContext) -> None:
             refresh_sources()
             status.text = "Fuente eliminada."
 
+        def toggle_source_click() -> None:
+            selected = sources_table.selected
+            if not selected:
+                status.text = "Selecciona la fuente que quieres activar o desactivar."
+                return
+            source = set_rom_source_enabled(selected[0]["id"], selected[0]["enabled"] == "no")
+            sources_table.selected = []
+            refresh_sources()
+            status.text = f"{source.label}: {'activada' if source.enabled else 'desactivada'}."
+
         with ui.row():
             ui.button("Añadir fuente", icon="add_link", on_click=add_source_click).props("color=primary")
+            ui.button("Activar/desactivar", icon="toggle_on", on_click=toggle_source_click).props("outline")
             ui.button("Eliminar fuente", icon="link_off", on_click=remove_source_click).props("outline")
 
         # --- Plan --------------------------------------------------------------
@@ -108,6 +127,7 @@ def build(ctx: UiContext) -> None:
                 ]
             }
 
+        ui.label("Marca filas para bajar solo esas; sin selección se descarga el plan entero.").classes("text-sm text-gray-600")
         plan_table = ui.table(
             columns=[
                 {"name": "confidence", "label": "Coincidencia", "field": "confidence", "sortable": True, "align": "center"},
@@ -116,33 +136,62 @@ def build(ctx: UiContext) -> None:
                 {"name": "size", "label": "Tamaño", "field": "size", "sortable": True, "align": "right"},
             ],
             rows=[],
+            row_key="url",
+            selection="multiple",
             pagination=15,
         ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
         plan_table.add_slot(
             "body-cell-confidence",
             """
                 <q-td :props="props" class="rp-center">
-                  <q-badge v-if="props.value === 'hash'" color="green" label="HASH" />
-                  <q-badge v-else-if="props.value === 'name-exact'" color="blue" label="NOMBRE" />
-                  <q-badge v-else color="amber" text-color="black" label="APROX." />
+                  <q-badge v-if="props.value === 'hash'" color="green" label="HASH">
+                    <q-tooltip>{{ props.row.confidence_label }}</q-tooltip>
+                  </q-badge>
+                  <q-badge v-else-if="props.value === 'name-exact'" color="blue" label="NOMBRE">
+                    <q-tooltip>{{ props.row.confidence_label }}</q-tooltip>
+                  </q-badge>
+                  <q-badge v-else color="amber" text-color="black" label="APROX.">
+                    <q-tooltip>{{ props.row.confidence_label }}</q-tooltip>
+                  </q-badge>
                 </q-td>
                 """,
         )
+
+        ui.label("Juegos que ninguna de tus fuentes ofrece").classes("text-md font-semibold")
+        unavailable_table = ui.table(
+            columns=[
+                {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
+                {"name": "game", "label": "Entrada del DAT", "field": "game", "align": "left"},
+            ],
+            rows=[],
+            pagination=5,
+        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+
         progress = ui.linear_progress(value=0.0, show_value=False).classes("w-full").props("instant-feedback")
         progress_label = ui.label("").classes("text-sm text-gray-600")
         progress.visible = False
 
         def refresh_plan_table() -> None:
             plan = holder["plan"]
+            plan_table.selected = []
             plan_table.rows = (
                 []
                 if plan is None
                 else [
-                    {"confidence": candidate.confidence, "title": candidate.title, "file": candidate.file_name, "size": human_size(candidate.size)}
+                    {
+                        "url": candidate.url,
+                        "confidence": candidate.confidence,
+                        "confidence_label": candidate.confidence_label,
+                        "title": candidate.title,
+                        "file": candidate.file_name,
+                        "size": human_size(candidate.size),
+                    }
                     for candidate in plan.candidates
                 ]
             )
             plan_table.update()
+            unavailable_table.rows = [] if plan is None else [{"title": missing.title, "game": missing.game_name} for missing in plan.unavailable]
+            unavailable_table.update()
 
         async def plan_click() -> None:
             if state.catalog is None:
@@ -158,6 +207,8 @@ def build(ctx: UiContext) -> None:
                 if errors:
                     status.text = "Fuentes no disponibles: " + " · ".join(errors)
                 if not remote_files:
+                    if not errors:
+                        status.text = "Todas las fuentes de esta plataforma están desactivadas."
                     return
                 plan = await asyncio.to_thread(
                     build_download_plan,
@@ -170,7 +221,8 @@ def build(ctx: UiContext) -> None:
                 )
             holder["plan"] = plan
             metric_labels["candidates"].text = f"A descargar: {len(plan.candidates)}"
-            metric_labels["size"].text = f"Tamaño: {human_size(plan.total_bytes)}"
+            unknown = plan.unknown_size_count
+            metric_labels["size"].text = f"Tamaño: {human_size(plan.total_bytes)}" + (f" (+{unknown} sin tamaño)" if unknown else "")
             metric_labels["present"].text = f"Ya presentes: {plan.present_groups}/{plan.dat_groups}"
             metric_labels["unavailable"].text = f"Sin fuente: {len(plan.unavailable)}"
             refresh_plan_table()
@@ -190,13 +242,17 @@ def build(ctx: UiContext) -> None:
             progress_label.text = f"{current} / {total} · {current_progress.get('title', '')}"
 
         async def download_click() -> None:
-            plan = holder["plan"]
-            if plan is None or not plan.candidates:
+            full_plan = holder["plan"]
+            if full_plan is None or not full_plan.candidates:
                 status.text = "Calcula primero un plan con candidatos."
                 return
             destination = ctx.source.value
             if not destination:
                 status.text = "Falta la carpeta del romset en Setup: es donde se instalará lo verificado."
+                return
+            plan = _selected_plan(full_plan, plan_table.selected)
+            if not plan.candidates:
+                status.text = "La selección no contiene ningún candidato."
                 return
             cancel_flag["cancelled"] = False
             progress.visible = True
@@ -244,6 +300,14 @@ def build(ctx: UiContext) -> None:
 
         refresh_sources()
         ctx.refresh_download_sources = refresh_sources
+
+
+def _selected_plan(plan: DownloadPlan, selected_rows: list[dict] | None) -> DownloadPlan:
+    """Acota el plan a las filas marcadas; sin selección se descarga entero."""
+    urls = {row["url"] for row in selected_rows or []}
+    if not urls:
+        return plan
+    return plan.model_copy(update={"candidates": [candidate for candidate in plan.candidates if candidate.url in urls]})
 
 
 def _source_id(label: str, platform: str | None) -> str:
