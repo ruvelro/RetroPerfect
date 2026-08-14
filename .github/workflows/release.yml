@@ -30,6 +30,9 @@ jobs:
         run: pip install -e . pyinstaller
       - name: Package (onedir)
         run: nicegui-pack --onedir --name RetroPerfect scripts/retroperfect_app.py
+      - name: Instrucciones de macOS
+        if: runner.os == 'macOS'
+        run: cp packaging/LEEME-macOS.txt dist/RetroPerfect/
       - name: Zip
         run: python -c "import shutil; shutil.make_archive('${{ matrix.asset }}', 'zip', 'dist', 'RetroPerfect')"
       - uses: actions/upload-artifact@v4

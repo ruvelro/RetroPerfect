@@ -35,7 +35,31 @@ Tu colección son años de trabajo. RetroPerfect está diseñado para no perder 
 
 **Sin Python** — descarga el ZIP de tu sistema (Windows, macOS o Linux) desde [Releases](https://github.com/ruvelro/RetroPerfect/releases), descomprímelo y ejecuta `RetroPerfect`. Se abre la interfaz en tu navegador.
 
-**Con Python** (3.11 o superior):
+<details>
+<summary><b>macOS: "Apple no ha podido verificar que RetroPerfect no contenga software malicioso"</b> — cómo abrirlo</summary>
+
+macOS marca con *cuarentena* todo lo que descargas. Quitar esa marca automáticamente exige firmar y notarizar la app con una cuenta de desarrollador de Apple de pago (99 $/año), que este proyecto no tiene. La app no tiene nada malo: solo no está notarizada.
+
+En el aviso pulsa **Aceptar** (nunca "Trasladar a la Papelera", que la borra) y ejecuta esto una vez, sustituyendo la ruta por la de tu carpeta descargada:
+
+```bash
+xattr -dr com.apple.quarantine ~/Downloads/RetroPerfect
+```
+
+Truco: escribe `xattr -dr com.apple.quarantine ` en Terminal y arrastra la carpeta desde el Finder para que se escriba sola la ruta. Después, doble clic normal.
+
+Hay que repetirlo con cada descarga nueva. Si prefieres no tocar la terminal cada vez, instálalo con `pip` (abajo): así no hay cuarentena ni avisos.
+
+</details>
+
+**Con Python** (3.11 o superior) — sin avisos de Gatekeeper en ningún sistema:
+
+```bash
+pip install git+https://github.com/ruvelro/RetroPerfect
+retroperfect gui
+```
+
+**Para desarrollar** (3.11 o superior):
 
 ```bash
 git clone https://github.com/ruvelro/RetroPerfect.git
