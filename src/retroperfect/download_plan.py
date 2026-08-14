@@ -36,6 +36,8 @@ class DownloadCandidate(BaseModel):
     source_id: str
     file_name: str
     url: str
+    # Ruta dentro del contenedor cuando la fuente es un ZIP; url apunta al ZIP.
+    inner_path: str | None = None
     size: int | None = None
     confidence: str = "name-fuzzy"
     expected_crc32: str | None = None
@@ -183,6 +185,7 @@ def _candidate(key: str, game: DatGame, source_id: str, remote: RemoteFile, conf
         source_id=source_id,
         file_name=remote.name,
         url=remote.url,
+        inner_path=remote.inner_path,
         size=remote.size or (rom.size if rom else None),
         confidence=confidence,
         expected_crc32=rom.crc32 if rom else None,

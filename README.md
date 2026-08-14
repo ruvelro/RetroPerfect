@@ -180,6 +180,7 @@ Hay tres tipos de fuente:
 | `archive_org` | identificador o URL de un ítem de archive.org | trae tamaño y md5/crc32, así que el emparejamiento es por hash |
 | `http_index` | URL de un autoíndice de Apache/nginx | empareja por nombre; la verificación sigue siendo por hash tras descargar |
 | `local_dir` | carpeta local, NAS o unidad de red montada | ideal para restaurar desde tu propia copia de seguridad |
+| `zip_index` | ruta o URL de un ZIP que contiene el set | lee su índice **sin descargarlo entero** y extrae solo los juegos que faltan |
 
 ```bash
 # Registra una fuente (aquí, tu backup en el NAS)
@@ -200,6 +201,19 @@ retroperfect download --platform nes --dat nes.dat --scan .retroperfect/scans/la
 Sin `--confirm` solo se muestra el plan. `--all-variants` desactiva el filtro del perfil y planifica todas las variantes del DAT; `--limit N` acota la tanda; `--refresh` fuerza releer los índices remotos (se cachean 12 h). Las descargas HTTP se reanudan solas si se cortan, y respetan el `Retry-After` del servidor.
 
 En la GUI, todo esto vive en la pestaña **Descargar**: gestiona las fuentes, muestra el plan con una etiqueta de cómo se emparejó cada archivo (por hash, por nombre exacto o aproximado), lista aparte los juegos que ninguna fuente ofrece, y permite marcar filas para bajar solo esas.
+
+#### Sets empaquetados en un solo ZIP
+
+Muchos sets se distribuyen como un único ZIP enorme. El tipo `zip_index` no lo descarga: el índice de un ZIP vive al final del archivo, así que con unas pocas peticiones de rango se obtiene la lista de lo que contiene y luego solo los bytes del juego que falta. Sobre un ZIP real de 112 MB en archive.org, listar sus 329 entradas y extraer un archivo transfirió **0,29 MB, el 0,26% del total**.
+
+Además, el índice de un ZIP guarda el CRC32 de cada entrada, así que el emparejamiento con el DAT sale **por hash** en vez de por nombre, que es la diferencia entre "creo que es este" y "es este".
+
+```bash
+retroperfect rom-source-add --id set --label "Set completo" --kind zip_index \
+  --location https://ejemplo.org/nes-set.zip --platform nes
+```
+
+Requiere que el servidor admita descargas parciales (`Accept-Ranges: bytes`); si no, lo dice claramente en vez de bajarse el archivo entero por sorpresa. Con un ZIP en disco o en el NAS funciona igual pasando su ruta.
 
 ### Papelera
 

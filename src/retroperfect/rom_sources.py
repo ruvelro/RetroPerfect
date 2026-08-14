@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import zipfile
 from datetime import UTC, datetime, timedelta
 from html import unescape
 from pathlib import Path
@@ -19,13 +20,15 @@ from pydantic import BaseModel, Field
 
 from .http import http_get
 from .paths import config_dir, data_dir
+from .remote_zip import HttpRangeReader
 
-SourceKind = Literal["archive_org", "http_index", "local_dir"]
+SourceKind = Literal["archive_org", "http_index", "local_dir", "zip_index"]
 
 SOURCE_KIND_LABELS: dict[str, str] = {
     "archive_org": "Ítem de archive.org (trae hashes: verificación fiable)",
     "http_index": "Índice HTTP (autoíndice de Apache/nginx)",
     "local_dir": "Carpeta local o unidad de red montada",
+    "zip_index": "ZIP con el set dentro, local o por URL (lee su índice sin bajarlo entero)",
 }
 
 # Los índices remotos cambian poco y algunos tienen miles de entradas: se cachean
@@ -58,12 +61,19 @@ class RemoteFile(BaseModel):
     crc32: str | None = None
     md5: str | None = None
     sha1: str | None = None
+    # Cuando el archivo vive dentro de un contenedor, `url` apunta al contenedor
+    # y esto a la ruta interna que hay que extraer.
+    inner_path: str | None = None
 
 
 class RemoteIndex(BaseModel):
     source_id: str
     fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     files: list[RemoteFile] = Field(default_factory=list)
+    # De qué origen salió: si la fuente se reapunta a otro sitio, la caché deja
+    # de valer aunque no haya expirado.
+    kind: str = ""
+    location: str = ""
 
 
 def sources_path() -> Path:
@@ -152,9 +162,11 @@ def resolve_source(source: RomSource, refresh: bool = False) -> RemoteIndex:
             cached = RemoteIndex.model_validate_json(cache.read_text(encoding="utf-8"))
         except ValueError:
             cached = None
-        if cached is not None and datetime.now(UTC) - cached.fetched_at < INDEX_CACHE_TTL:
+        fresh = cached is not None and datetime.now(UTC) - cached.fetched_at < INDEX_CACHE_TTL
+        same_origin = cached is not None and (cached.kind, cached.location) == (source.kind, source.location)
+        if cached is not None and fresh and same_origin:
             return cached
-    index = RemoteIndex(source_id=source.id, files=_fetch_files(source))
+    index = RemoteIndex(source_id=source.id, kind=source.kind, location=source.location, files=_fetch_files(source))
     cache.write_text(index.model_dump_json(indent=2), encoding="utf-8")
     return index
 
@@ -166,6 +178,8 @@ def _fetch_files(source: RomSource) -> list[RemoteFile]:
         return _fetch_http_index(source.location)
     if source.kind == "local_dir":
         return _fetch_local_dir(source.location)
+    if source.kind == "zip_index":
+        return _fetch_zip_index(source.location)
     raise ValueError(f"Tipo de fuente no soportado: {source.kind}")
 
 
@@ -237,6 +251,41 @@ def _fetch_local_dir(location: str) -> list[RemoteFile]:
         for path in sorted(root.rglob("*"))
         if path.is_file() and not path.name.startswith(".")
     ]
+
+
+def _fetch_zip_index(location: str) -> list[RemoteFile]:
+    """Lista el contenido de un ZIP sin descargarlo entero.
+
+    El directorio del ZIP guarda el CRC32 de cada entrada, así que el
+    emparejamiento con el DAT sale por hash y no por nombre.
+    """
+    with _open_zip(location) as archive:
+        return [
+            RemoteFile(
+                name=Path(info.filename).name,
+                url=location,
+                inner_path=info.filename,
+                size=info.file_size,
+                crc32=f"{info.CRC & 0xFFFFFFFF:08x}",
+            )
+            for info in archive.infolist()
+            if not info.is_dir() and not Path(info.filename).name.startswith(".")
+        ]
+
+
+def _open_zip(location: str) -> zipfile.ZipFile:
+    if "://" in location and not location.startswith("file://"):
+        return zipfile.ZipFile(HttpRangeReader(location))  # type: ignore[arg-type]
+    path = Path(location[7:] if location.startswith("file://") else location).expanduser()
+    if not path.is_file():
+        raise RuntimeError(f"El archivo ZIP '{path}' no existe o no es accesible.")
+    return zipfile.ZipFile(path)
+
+
+def read_zip_member(location: str, inner_path: str) -> bytes:
+    """Extrae un miembro concreto; en remoto solo se piden sus bytes."""
+    with _open_zip(location) as archive, archive.open(inner_path) as member:
+        return member.read()
 
 
 def _quote_path(name: str) -> str:

@@ -281,8 +281,8 @@ def rom_sources() -> None:
 def rom_source_add(
     id: Annotated[str, typer.Option("--id", help="Identificador corto y único.")],
     label: Annotated[str, typer.Option("--label", help="Nombre visible de la fuente.")],
-    kind: Annotated[str, typer.Option("--kind", help="archive_org, http_index o local_dir.")],
-    location: Annotated[str, typer.Option("--location", help="Ítem de archive.org, URL del índice o ruta de la carpeta.")],
+    kind: Annotated[str, typer.Option("--kind", help="archive_org, http_index, local_dir o zip_index.")],
+    location: Annotated[str, typer.Option("--location", help="Ítem de archive.org, URL del índice, ruta de la carpeta o ruta/URL del ZIP.")],
     platform: Annotated[str | None, typer.Option("--platform", help="Limita la fuente a una plataforma.")] = None,
     notes: Annotated[str, typer.Option("--notes")] = "",
 ) -> None:

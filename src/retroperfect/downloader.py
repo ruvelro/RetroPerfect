@@ -19,6 +19,7 @@ from .download_plan import DownloadCandidate, DownloadPlan, group_key
 from .http import session
 from .models import Platform
 from .paths import project_state_dir
+from .rom_sources import read_zip_member
 from .scanner import scan_file
 
 ProgressCallback = Callable[[dict[str, object]], None]
@@ -138,7 +139,10 @@ def _process_candidate(
 ) -> DownloadOutcome:
     staged = staging / candidate.file_name
     try:
-        downloaded = _fetch(candidate.url, staged, cancelled=cancelled)
+        if candidate.inner_path:
+            downloaded = _extract_member(candidate.url, candidate.inner_path, staged)
+        else:
+            downloaded = _fetch(candidate.url, staged, cancelled=cancelled)
     except _Cancelled:
         return DownloadOutcome(title=candidate.title, file_name=candidate.file_name, status="cancelled")
     except Exception as exc:
@@ -178,6 +182,14 @@ def _verify_against_dat(path: Path, candidate: DownloadCandidate, dat_index: Dat
     if candidate.group_key not in groups:
         return f"El archivo verifica contra el DAT, pero corresponde a otro juego: {', '.join(sorted(groups))}."
     return None
+
+
+def _extract_member(container: str, inner_path: str, destination: Path) -> int:
+    """Saca un miembro del ZIP contenedor; en remoto solo se piden sus bytes."""
+    data = read_zip_member(container, inner_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(data)
+    return len(data)
 
 
 def _fetch(url: str, destination: Path, cancelled: CancelCheck | None = None) -> int:

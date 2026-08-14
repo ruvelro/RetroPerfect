@@ -3,6 +3,7 @@ from __future__ import annotations
 import binascii
 import hashlib
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -594,3 +595,74 @@ def test_confidence_label_explains_each_match(tmp_path: Path) -> None:
     remote = {"src": [RemoteFile(name="Juego (Europe).nes", url="/m/eu")]}
     plan = build_download_plan(parse_logiqx_dat(dat), None, PROFILE, remote, platform=Platform.NES)
     assert plan.candidates[0].confidence_label == "Nombre idéntico al del DAT"
+
+
+# --- ZIP como fuente ---------------------------------------------------------
+
+
+def _zip_with(path: Path, entries: dict[str, bytes]) -> Path:
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, payload in entries.items():
+            archive.writestr(name, payload)
+    return path
+
+
+def test_zip_index_lists_members_with_their_crc(isolated_config: Path, tmp_path: Path) -> None:
+    payload = b"METROID-DATA"
+    archive = _zip_with(tmp_path / "set.zip", {"Metroid (Europe).nes": payload, "leeme.txt": b"x"})
+
+    index = resolve_source(RomSource(id="set", label="Set", kind="zip_index", location=str(archive)))
+
+    metroid = next(file for file in index.files if file.name == "Metroid (Europe).nes")
+    assert metroid.inner_path == "Metroid (Europe).nes"
+    assert metroid.size == len(payload)
+    # El directorio del ZIP guarda el CRC32: el emparejamiento sale por hash.
+    assert metroid.crc32 == f"{binascii.crc32(payload) & 0xFFFFFFFF:08x}"
+
+
+def test_zip_index_matches_the_dat_by_hash(tmp_path: Path) -> None:
+    payload = b"METROID-DATA"
+    dat = _dat(tmp_path, {"Metroid (Europe)": payload})
+    archive = _zip_with(tmp_path / "set.zip", {"cualquier-nombre.bin": payload})
+    with zipfile.ZipFile(archive) as opened:
+        info = opened.infolist()[0]
+    remote = {"src": [RemoteFile(name=info.filename, url=str(archive), inner_path=info.filename, size=info.file_size, crc32=f"{info.CRC & 0xFFFFFFFF:08x}")]}
+
+    plan = build_download_plan(parse_logiqx_dat(dat), None, PROFILE, remote, platform=Platform.NES)
+    assert plan.candidates[0].confidence == "hash"
+
+
+def test_zip_member_is_extracted_verified_and_installed(isolated_config: Path, tmp_path: Path) -> None:
+    payload = b"METROID-DATA"
+    dat = _dat(tmp_path, {"Metroid (Europe)": payload})
+    archive = _zip_with(tmp_path / "set.zip", {"Metroid (Europe).nes": payload, "Otro (USA).nes": b"OTRA-COSA"})
+    catalog = parse_logiqx_dat(dat)
+    remote = {"src": resolve_source(RomSource(id="s", label="S", kind="zip_index", location=str(archive))).files}
+
+    plan = build_download_plan(catalog, None, PROFILE, remote, platform=Platform.NES)
+    dest = tmp_path / "romset"
+    report = run_download_plan(plan, dest, dat_index=DatIndex(catalog), state_base=tmp_path)
+
+    assert report.downloaded == 1
+    assert (dest / "Metroid (Europe).nes").read_bytes() == payload
+    # Solo se extrae lo planificado, no el ZIP entero.
+    assert not (dest / "Otro (USA).nes").exists()
+
+
+def test_zip_index_reports_a_missing_archive(isolated_config: Path, tmp_path: Path) -> None:
+    files, errors = resolve_remote_files([RomSource(id="x", label="Set roto", kind="zip_index", location=str(tmp_path / "no-existe.zip"))])
+    assert files == {}
+    assert errors and "no existe" in errors[0]
+
+
+def test_index_cache_is_invalidated_when_the_source_moves(isolated_config: Path, tmp_path: Path) -> None:
+    """Reapuntar una fuente debe releer el índice aunque la caché siga fresca."""
+    first, second = tmp_path / "uno", tmp_path / "dos"
+    first.mkdir()
+    second.mkdir()
+    (first / "Uno.nes").write_bytes(b"A")
+    (second / "Dos.nes").write_bytes(b"B")
+
+    assert [f.name for f in resolve_source(RomSource(id="espejo", label="E", kind="local_dir", location=str(first))).files] == ["Uno.nes"]
+    moved = RomSource(id="espejo", label="E", kind="local_dir", location=str(second))
+    assert [f.name for f in resolve_source(moved).files] == ["Dos.nes"]
