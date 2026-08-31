@@ -10,6 +10,20 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
+keywords = ["roms", "retro", "emulation", "no-intro", "redump", "mame", "dat", "1g1r", "retroachievements"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+  "Intended Audience :: End Users/Desktop",
+  "Natural Language :: Spanish",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Games/Entertainment",
+  "Topic :: System :: Archiving",
+]
 dependencies = [
   "nicegui>=2.0.0",
   "platformdirs>=4.2.0",
@@ -31,6 +45,12 @@ dev = [
   "types-PyYAML",
   "types-requests",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ruvelro/RetroPerfect"
+Repository = "https://github.com/ruvelro/RetroPerfect"
+Issues = "https://github.com/ruvelro/RetroPerfect/issues"
+Releases = "https://github.com/ruvelro/RetroPerfect/releases"
 
 [project.scripts]
 retroperfect = "retroperfect.cli:app"

@@ -280,7 +280,7 @@ Cada tag `v*` publica automáticamente los paquetes de Windows, macOS y Linux en
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 108 tests
+pytest -q            # 178 tests
 ruff check src tests # lint
 mypy                 # type-checking estricto en verde
 ```
@@ -291,11 +291,11 @@ La CI ejecuta las tres cosas en Python 3.11, 3.12 y 3.13.
 
 **Distribución más cómoda** (evita los avisos de seguridad de la primera ejecución):
 
-- **Publicar en PyPI** para que baste `pipx install retroperfect`, sin clonar ni pegar URLs de GitHub. Requiere una cuenta de PyPI y un token guardado como secreto del repositorio; el workflow de publicación se añadiría al de release.
+- **Publicar en PyPI** para que baste `pipx install retroperfect`, sin clonar ni pegar URLs de GitHub. El workflow de publicación ya está en el release (vía *Trusted Publishing*, sin tokens); solo falta registrar el publicador de confianza en pypi.org y crear el environment `pypi` en GitHub. Desde ese momento, cada tag `v*` publica también en PyPI.
 - **Tap de Homebrew** (`brew install ruvelro/retroperfect/retroperfect`), como fórmula de Python: al compilarse en local no pasa por Gatekeeper, así que no da ningún aviso y sirve para macOS y Linux. Lo natural es hacerlo después de PyPI, porque entonces la fórmula se genera casi sola con `brew update-python-resources`. Entrar en el repositorio oficial de Homebrew exige unos mínimos de popularidad, así que el primer paso es un tap propio.
 - **Firmar y notarizar los binarios** eliminaría los avisos de macOS y Windows, pero es la única vía de pago: unos 99 $/año en Apple y entre 200 y 400 $/año un certificado para Windows.
 
-**Funcionalidad**: hash de RetroAchievements para CHD y CDI (falta un lector mantenido de esos formatos), parches RUP, y firma de los binarios en la propia CI.
+**Funcionalidad**: soporte CHD para sistemas de CD — verificación y hash de RetroAchievements — usando [chdimage](https://pypi.org/project/chdimage/) (bindings de Rust con wheels para los tres sistemas; los CHD de GDI y disco duro aún no los soporta el lector). CDI sigue sin lector mantenido. También: parches RUP y firma de los binarios en la propia CI.
 
 ## Aviso
 

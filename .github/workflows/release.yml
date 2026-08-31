@@ -8,6 +8,39 @@ permissions:
   contents: write
 
 jobs:
+  # Publica en PyPI vía Trusted Publishing (OIDC): sin tokens ni secretos.
+  # Requiere registrar el publicador en pypi.org (repo ruvelro/RetroPerfect,
+  # workflow release.yml, environment pypi) y crear el environment en GitHub.
+  pypi:
+    # Publicar en PyPI es irreversible (una versión no se puede resubir), así
+    # que espera a que los binarios compilen: si algo falla, se corrige y se
+    # re-etiqueta sin haber quemado el número de versión.
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/retroperfect
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Comprobar que el tag coincide con la versión del paquete
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$tag" != "$version" ]; then
+            echo "El tag v$tag no coincide con la versión $version de pyproject.toml" >&2
+            exit 1
+          fi
+      - name: Construir sdist y wheel
+        run: |
+          pip install build
+          python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
   build:
     strategy:
       fail-fast: false
