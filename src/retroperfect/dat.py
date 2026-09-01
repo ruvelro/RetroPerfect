@@ -158,6 +158,7 @@ class DatIndex:
         self.by_sha1: dict[str, DatGame] = {}
         self.by_size: dict[int, list[DatGame]] = {}
         self.by_set_name: dict[str, DatGame] = {}
+        self.by_track_sha1s: dict[tuple[str, ...], DatGame] = {}
         self.headered_candidates_by_payload_size: dict[int, list[bytes]] = {}
         self.headered_candidates_by_name: dict[str, list[tuple[DatGame, bytes]]] = {}
         for game in catalog.games:
@@ -165,6 +166,11 @@ class DatIndex:
                 self.by_set_name[_name_key(game.name)] = game
             if game.description:
                 self.by_set_name.setdefault(_name_key(game.description), game)
+            # Un CHD contiene las pistas pero no el .cue/.gdi (texto de layout),
+            # así que la clave son los sha1 de las pistas, sin orden.
+            track_sha1s = sorted(rom.sha1 for rom in game.roms if rom.sha1 and not rom.name.lower().endswith((".cue", ".gdi")))
+            if track_sha1s:
+                self.by_track_sha1s.setdefault(tuple(track_sha1s), game)
             for rom in game.roms:
                 if rom.crc32:
                     self.by_crc.setdefault(rom.crc32, []).append((game, rom.size))
@@ -196,7 +202,11 @@ class DatIndex:
         if full:
             return full
         if hashes.payload_crc32 and hashes.payload_md5 and hashes.payload_sha1 and hashes.payload_size:
-            return self.match(hashes.payload_crc32, hashes.payload_md5, hashes.payload_sha1, hashes.payload_size)
+            payload = self.match(hashes.payload_crc32, hashes.payload_md5, hashes.payload_sha1, hashes.payload_size)
+            if payload:
+                return payload
+        if hashes.track_sha1s:
+            return self.by_track_sha1s.get(tuple(sorted(sha1.lower() for sha1 in hashes.track_sha1s)))
         return None
 
     def match_data(self, data: bytes, hashes, filename: str | None = None) -> DatGame | None:

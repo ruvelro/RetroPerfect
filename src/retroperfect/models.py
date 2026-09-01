@@ -220,6 +220,9 @@ class RomHash(BaseModel):
     payload_sha1: str | None = None
     payload_size: int | None = None
     ra_md5: str | None = None
+    # Sha1 por pista de un CHD de CD: los DAT de Redump hashean las pistas,
+    # no el contenedor, así que el matching va por aquí.
+    track_sha1s: list[str] | None = None
 
     @property
     def ra_hash(self) -> str:

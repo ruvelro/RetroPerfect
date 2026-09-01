@@ -25,6 +25,7 @@ classifiers = [
   "Topic :: System :: Archiving",
 ]
 dependencies = [
+  "chdimage>=0.2.1",
   "nicegui>=2.0.0",
   "platformdirs>=4.2.0",
   "py7zr>=1.0.0",

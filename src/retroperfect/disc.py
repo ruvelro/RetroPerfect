@@ -1,7 +1,7 @@
 """Lector mínimo de imágenes de disco (ISO 2048, BIN/CUE 2352 y GDI multipista)
 con ISO9660, suficiente para calcular los hashes de RetroAchievements de PSX,
-Sega CD/Saturn, PSP y Dreamcast. CHD y CDI no están soportados (no existe
-binding Python mantenido de libchdr y el formato DiscJuggler es propietario)."""
+Sega CD/Saturn, PSP y Dreamcast. Los CHD de CD se leen vía chd.py (chdimage);
+los CHD de GDI/DVD y el formato CDI (propietario) siguen sin soporte."""
 from __future__ import annotations
 
 import hashlib
@@ -17,52 +17,27 @@ class DiscError(Exception):
     pass
 
 
-class DiscImage:
-    """Acceso por sectores de datos (2048 bytes de usuario) sobre .iso, .bin, .cue o .gdi.
+class Iso9660Image:
+    """Acceso por sectores de datos (2048 bytes de usuario) más lectura ISO9660.
 
     base_lba es el LBA absoluto donde empieza la pista de datos: 0 en CD/ISO
     normales y 45000 en la sesión de alta densidad de un GDI de Dreamcast.
-    Los métodos de sector aceptan LBAs absolutos del disco."""
+    Los métodos de sector aceptan LBAs absolutos del disco. Las subclases
+    implementan read_user_sector sobre su formato concreto."""
 
-    def __init__(self, path: Path, base_lba: int = 0):
-        if path.suffix.lower() == ".cue":
-            path = _data_file_from_cue(path)
-        elif path.suffix.lower() == ".gdi":
-            path, base_lba = _data_track_from_gdi(path)
-        self.path = path
-        self.base_lba = base_lba
-        self.handle = path.open("rb")
-        self.sector_size, self.user_offset = self._detect_layout()
+    base_lba: int = 0
+
+    def read_user_sector(self, lba: int) -> bytes:
+        raise NotImplementedError
 
     def close(self) -> None:
-        self.handle.close()
+        pass
 
-    def __enter__(self) -> DiscImage:
+    def __enter__(self) -> Iso9660Image:
         return self
 
     def __exit__(self, *exc: object) -> None:
         self.close()
-
-    def _detect_layout(self) -> tuple[int, int]:
-        self.handle.seek(0)
-        head = self.handle.read(16)
-        if len(head) < 16:
-            raise DiscError("Imagen demasiado pequeña.")
-        if head[:12] == RAW_SYNC:
-            mode = head[15]
-            if mode == 1:
-                return RAW_SECTOR_SIZE, 16
-            if mode == 2:
-                return RAW_SECTOR_SIZE, 24  # MODE2/XA form 1
-            raise DiscError(f"Modo de sector raw no soportado: {mode}")
-        return SECTOR_USER_SIZE, 0
-
-    def read_user_sector(self, lba: int) -> bytes:
-        index = lba - self.base_lba
-        if index < 0:
-            raise DiscError(f"LBA {lba} anterior al inicio de la pista ({self.base_lba}).")
-        self.handle.seek(index * self.sector_size + self.user_offset)
-        return self.handle.read(SECTOR_USER_SIZE)
 
     def read_extent(self, sector: int, size: int) -> bytes:
         chunks: list[bytes] = []
@@ -129,6 +104,44 @@ class DiscImage:
         return self.read_extent(sector, size)
 
 
+class DiscImage(Iso9660Image):
+    """Imagen respaldada por archivo: .iso, .bin, .cue o .gdi."""
+
+    def __init__(self, path: Path, base_lba: int = 0):
+        if path.suffix.lower() == ".cue":
+            path = _data_file_from_cue(path)
+        elif path.suffix.lower() == ".gdi":
+            path, base_lba = _data_track_from_gdi(path)
+        self.path = path
+        self.base_lba = base_lba
+        self.handle = path.open("rb")
+        self.sector_size, self.user_offset = self._detect_layout()
+
+    def close(self) -> None:
+        self.handle.close()
+
+    def _detect_layout(self) -> tuple[int, int]:
+        self.handle.seek(0)
+        head = self.handle.read(16)
+        if len(head) < 16:
+            raise DiscError("Imagen demasiado pequeña.")
+        if head[:12] == RAW_SYNC:
+            mode = head[15]
+            if mode == 1:
+                return RAW_SECTOR_SIZE, 16
+            if mode == 2:
+                return RAW_SECTOR_SIZE, 24  # MODE2/XA form 1
+            raise DiscError(f"Modo de sector raw no soportado: {mode}")
+        return SECTOR_USER_SIZE, 0
+
+    def read_user_sector(self, lba: int) -> bytes:
+        index = lba - self.base_lba
+        if index < 0:
+            raise DiscError(f"LBA {lba} anterior al inicio de la pista ({self.base_lba}).")
+        self.handle.seek(index * self.sector_size + self.user_offset)
+        return self.handle.read(SECTOR_USER_SIZE)
+
+
 def _data_file_from_cue(cue_path: Path) -> Path:
     text = cue_path.read_text(encoding="utf-8", errors="replace")
     match = re.search(r'FILE\s+"([^"]+)"', text, re.I) or re.search(r"FILE\s+(\S+)", text, re.I)
@@ -165,7 +178,7 @@ def _data_track_from_gdi(gdi_path: Path) -> tuple[Path, int]:
     return path, lba
 
 
-def dreamcast_ra_md5(disc: DiscImage) -> str:
+def dreamcast_ra_md5(disc: Iso9660Image) -> str:
     """rcheevos: MD5 de los primeros 256 bytes de IP.BIN + el binario de arranque que declara."""
     ip_bin = disc.read_user_sector(disc.base_lba)
     if not ip_bin.startswith(b"SEGA SEGAKATANA"):
@@ -177,7 +190,7 @@ def dreamcast_ra_md5(disc: DiscImage) -> str:
     return digest.hexdigest()
 
 
-def psx_ra_md5(disc: DiscImage) -> str:
+def psx_ra_md5(disc: Iso9660Image) -> str:
     """rcheevos: MD5 del nombre del ejecutable (según SYSTEM.CNF) + su contenido."""
     exe_name = "PSX.EXE"
     try:
@@ -197,13 +210,13 @@ def psx_ra_md5(disc: DiscImage) -> str:
     return digest.hexdigest()
 
 
-def segacd_ra_md5(disc: DiscImage) -> str:
+def segacd_ra_md5(disc: Iso9660Image) -> str:
     """rcheevos: MD5 de los primeros 512 bytes del sector 0 (cabecera del disco).
     Vale tanto para Sega CD como para Saturn."""
     return hashlib.md5(disc.read_user_sector(0)[:512]).hexdigest()
 
 
-def psp_ra_md5(disc: DiscImage) -> str:
+def psp_ra_md5(disc: Iso9660Image) -> str:
     """rcheevos: MD5 de PSP_GAME/PARAM.SFO + PSP_GAME/SYSDIR/EBOOT.BIN."""
     digest = hashlib.md5()
     digest.update(disc.read_file("PSP_GAME/PARAM.SFO"))
@@ -212,7 +225,16 @@ def psp_ra_md5(disc: DiscImage) -> str:
 
 
 DISC_RA_MODES = {"psx", "segacd", "psp", "dreamcast"}
-DISC_RA_SUFFIXES = {".cue", ".iso", ".bin", ".gdi"}
+DISC_RA_SUFFIXES = {".cue", ".iso", ".bin", ".gdi", ".chd"}
+
+
+def open_disc(path: Path) -> Iso9660Image:
+    """Abre una imagen de disco con el lector que corresponda a su formato."""
+    if path.suffix.lower() == ".chd":
+        from .chd import ChdDiscImage  # import tardío: chd.py depende de este módulo
+
+        return ChdDiscImage(path)
+    return DiscImage(path)
 
 
 def disc_ra_md5(path: Path, hash_mode: str) -> str | None:
@@ -220,7 +242,7 @@ def disc_ra_md5(path: Path, hash_mode: str) -> str | None:
     if hash_mode not in DISC_RA_MODES or path.suffix.lower() not in DISC_RA_SUFFIXES:
         return None
     try:
-        with DiscImage(path) as disc:
+        with open_disc(path) as disc:
             if hash_mode == "psx":
                 return psx_ra_md5(disc)
             if hash_mode == "segacd":

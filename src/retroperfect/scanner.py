@@ -11,6 +11,7 @@ from pathlib import Path
 import py7zr
 from py7zr.io import BytesIOFactory
 
+from .chd import chd_track_sha1s
 from .dat import DatIndex
 from .disc import disc_ra_md5
 from .hashing import HEADER_HASH_MODES, arcade_ra_md5, hash_bytes, hash_stream
@@ -127,10 +128,17 @@ def _scan_arcade_container(
 def _scan_loose_file(path: Path, platform: Platform, dat_index: DatIndex | None, cache: ScanHashCache | None) -> ScannedRom:
     stat = path.stat()
     hash_mode = platform_spec(platform).hash_mode
+    is_chd = path.suffix.lower() == ".chd"
     cached = cache.get(str(path), None, platform, stat.st_size, stat.st_mtime_ns) if cache else None
     if cached is not None:
         if cached.ra_md5 is None:
             cached.ra_md5 = disc_ra_md5(path, hash_mode)
+        if is_chd and cached.track_sha1s is None:
+            # entrada cacheada antes del soporte CHD: completar y re-guardar,
+            # que calcular los sha1 de pista descomprime el CHD entero
+            cached.track_sha1s = chd_track_sha1s(path)
+            if cache and cached.track_sha1s is not None:
+                cache.put(str(path), None, platform, stat.st_size, stat.st_mtime_ns, cached)
         return _scan_payload(hashes=cached, data_loader=path.read_bytes, source_path=path, container_path=path, inner_path=None, platform=platform, dat_index=dat_index)
     if _should_stream(platform, stat.st_size):
         with path.open("rb") as fh:
@@ -140,6 +148,8 @@ def _scan_loose_file(path: Path, platform: Platform, dat_index: DatIndex | None,
         hashes = hash_bytes(data, platform)
     if hashes.ra_md5 is None:
         hashes.ra_md5 = disc_ra_md5(path, hash_mode)
+    if is_chd:
+        hashes.track_sha1s = chd_track_sha1s(path)
     if cache:
         cache.put(str(path), None, platform, stat.st_size, stat.st_mtime_ns, hashes)
     if _should_stream(platform, stat.st_size):

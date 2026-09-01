@@ -262,7 +262,9 @@ retroperfect trash-empty --confirm         # vaciado definitivo
 
 Más de 190 sistemas catalogados, desde NES hasta Dreamcast, pasando por ordenadores clásicos (Amiga, MSX, ZX Spectrum...), portátiles y arcade (MAME, FBNeo, CPS, Neo Geo...). Cada plataforma incluye su DAT recomendado, extensiones esperadas y diagnósticos específicos (cabeceras NES, endianness N64, variantes A78/BIN, sets arcade con parents/clones/BIOS/CHD).
 
-**Hashes RetroAchievements soportados**: cartuchos (hash directo), NES/FDS/SNES/Lynx/Atari 7800/PC Engine (descarte de cabeceras), N64 (normalización de endianness), Nintendo DS (cabecera + ARM9 + ARM7 + icono), arcade (por nombre de set) y sistemas de disco — PSX (ejecutable de SYSTEM.CNF), Sega CD/Saturn (cabecera del disco) y PSP (PARAM.SFO + EBOOT.BIN) sobre imágenes `.iso`, `.bin` y `.cue`. CHD, GDI multipista y CDI quedan pendientes.
+**Hashes RetroAchievements soportados**: cartuchos (hash directo), NES/FDS/SNES/Lynx/Atari 7800/PC Engine (descarte de cabeceras), N64 (normalización de endianness), Nintendo DS (cabecera + ARM9 + ARM7 + icono), arcade (por nombre de set) y sistemas de disco — PSX (ejecutable de SYSTEM.CNF), Sega CD/Saturn (cabecera del disco) y PSP (PARAM.SFO + EBOOT.BIN) sobre imágenes `.iso`, `.bin`, `.cue` y `.chd` de CD. Los CHD de GDI (Dreamcast) o DVD, los GDI multipista y el formato CDI quedan pendientes.
+
+**CHD**: un CHD de CD se identifica contra el DAT por el sha1 de cada pista (los mismos que lista Redump, sin descomprimirlo a disco), así que `verify` y la curación 1G1R lo tratan como a cualquier `.bin/.cue` — y el hash de RetroAchievements se calcula leyendo sus sectores directamente.
 
 ## Parches soportados
 
@@ -295,7 +297,7 @@ La CI ejecuta las tres cosas en Python 3.11, 3.12 y 3.13.
 - **Tap de Homebrew** (`brew install ruvelro/retroperfect/retroperfect`), como fórmula de Python: al compilarse en local no pasa por Gatekeeper, así que no da ningún aviso y sirve para macOS y Linux. Lo natural es hacerlo después de PyPI, porque entonces la fórmula se genera casi sola con `brew update-python-resources`. Entrar en el repositorio oficial de Homebrew exige unos mínimos de popularidad, así que el primer paso es un tap propio.
 - **Firmar y notarizar los binarios** eliminaría los avisos de macOS y Windows, pero es la única vía de pago: unos 99 $/año en Apple y entre 200 y 400 $/año un certificado para Windows.
 
-**Funcionalidad**: soporte CHD para sistemas de CD — verificación y hash de RetroAchievements — usando [chdimage](https://pypi.org/project/chdimage/) (bindings de Rust con wheels para los tres sistemas; los CHD de GDI y disco duro aún no los soporta el lector). CDI sigue sin lector mantenido. También: parches RUP y firma de los binarios en la propia CI.
+**Funcionalidad**: los CHD de GDI (Dreamcast) y de DVD (PS2/PSP) cuando [chdimage](https://pypi.org/project/chdimage/) los soporte upstream. CDI sigue sin lector mantenido. También: parches RUP y firma de los binarios en la propia CI.
 
 ## Aviso
 
