@@ -17,6 +17,7 @@ from ..gui_rows import (
     _profile_options,
 )
 from ..gui_state import _log_activity, _profile_comparison_rows, state
+from ..gui_widgets import _data_table
 from ..models import ExportLayout
 from ..profile import list_recommended_profiles, load_profile, save_named_profile
 
@@ -113,7 +114,8 @@ def build(ctx: UiContext) -> None:
             ui.separator()
             ui.label("Comparador de perfiles").classes("text-md font-semibold")
             ui.label("Después de escanear, compara cuántos archivos guardaría cada preset antes de crear el plan definitivo.").classes("text-sm text-gray-600")
-            profile_compare_table = ui.table(
+            profile_compare_table = _data_table(
+            card=False,
                 columns=[
                     {"name": "profile", "label": "Perfil", "field": "profile", "sortable": True, "align": "left"},
                     {"name": "main", "label": "Main", "field": "main", "sortable": True, "align": "right"},
@@ -124,7 +126,7 @@ def build(ctx: UiContext) -> None:
                 ],
                 rows=[],
                 pagination=8,
-            ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+            )
 
             def compare_profiles_click() -> None:
                 profile_compare_table.rows = _profile_comparison_rows(state.scan, ctx.outdir.value)

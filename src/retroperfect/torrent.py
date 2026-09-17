@@ -108,11 +108,6 @@ def _text(value: Any, encoding: str = "utf-8") -> str | None:
 # --- bencode -----------------------------------------------------------------
 
 
-def bdecode(data: bytes) -> Any:
-    value, offset = _decode(data, 0)
-    return value
-
-
 def _decode(data: bytes, offset: int) -> tuple[Any, int]:
     if offset >= len(data):
         raise TorrentError("Datos bencode incompletos.")

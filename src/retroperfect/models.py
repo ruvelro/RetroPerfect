@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -353,8 +352,3 @@ class Manifest(BaseModel):
     profile_snapshot: dict[str, Any]
     entries: list[ManifestEntry] = Field(default_factory=list)
     discarded: list[CandidateDecision] = Field(default_factory=list)
-
-
-def ensure_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True)
-    return path

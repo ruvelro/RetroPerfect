@@ -18,7 +18,7 @@ from ..gui_rows import (
     _ra_status_label,
     _source_suffixes,
 )
-from ..gui_state import _current_platform, _log_activity, busy, state
+from ..gui_state import _current_platform, _log_activity, busy, guarded, state
 from ..gui_widgets import _path_picker
 from ..models import SelectionProfile
 from ..platforms import platform_spec
@@ -156,29 +156,28 @@ def build(ctx: UiContext) -> None:
                 dat_source = ui.select(source_options, value=next(iter(source_options)), label="Descargar DAT").props("outlined").classes("w-full")
 
                 async def download_dat_click() -> None:
-                    try:
+                    with guarded(dat_status, "No se pudo descargar", busy_label="descarga de DAT"):
                         imported = await asyncio.to_thread(download_and_import_source, dat_source.value)
                         dat.value = imported[0].path
                         dat_status.text = f"DAT descargado e importado: {imported[0].name}"
                         ctx.refresh_dat_table()
                         ctx.refresh_needed_table()
-                    except Exception as exc:
-                        dat_status.text = f"No se pudo descargar: {exc}"
 
                 ui.button("Descargar seleccionado", icon="download", on_click=download_dat_click).props("color=primary").classes("w-fit")
                 validation_status = ui.label().classes("text-sm text-gray-600")
 
                 async def validate_click() -> None:
                     validation_status.text = "Validando configuración..."
-                    issues = await asyncio.to_thread(
-                        validate_setup,
-                        Path(source.value) if source.value else None,
-                        Path(dat.value) if dat.value else None,
-                        Path(outdir.value) if outdir.value else None,
-                    )
-                    ready = not issues
-                    ctx.set_setup_ready(ready)
-                    validation_status.text = "Configuración lista. Ya puedes continuar con Perfil, Escaneo y Plan." if ready else " · ".join(issues)
+                    with guarded(validation_status, "No se pudo validar", busy_label="validación de la configuración"):
+                        issues = await asyncio.to_thread(
+                            validate_setup,
+                            Path(source.value) if source.value else None,
+                            Path(dat.value) if dat.value else None,
+                            Path(outdir.value) if outdir.value else None,
+                        )
+                        ready = not issues
+                        ctx.set_setup_ready(ready)
+                        validation_status.text = "Configuración lista. Ya puedes continuar con Perfil, Escaneo y Plan." if ready else " · ".join(issues)
 
                 ui.button("Validar configuración", icon="verified", on_click=validate_click).props("outline").classes("w-fit")
 

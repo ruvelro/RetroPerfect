@@ -15,6 +15,7 @@ from ..gui_rows import (
     _patch_queue_rows,
 )
 from ..gui_state import _current_platform, state
+from ..gui_widgets import _data_table
 
 
 def build(ctx: UiContext) -> None:
@@ -46,7 +47,8 @@ def build(ctx: UiContext) -> None:
             audit_patches = ui.label("Parches: 0").classes("border border-gray-200 rounded-md p-3 text-center")
         audit_notes = ui.label("La auditoría se calcula tras escanear y mejora al crear el plan.").classes("text-sm text-gray-600")
         ui.label("Avisos de DAT / romset").classes("text-md font-semibold")
-        dat_warning_table = ui.table(
+        dat_warning_table = _data_table(
+            card=False,
             columns=[
                 {"name": "status", "label": "", "field": "status", "align": "center"},
                 {"name": "item", "label": "Elemento", "field": "item", "sortable": True, "align": "left"},
@@ -55,7 +57,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=5,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+        )
         dat_warning_table.add_slot(
             "body-cell-status",
             """
@@ -68,7 +70,8 @@ def build(ctx: UiContext) -> None:
                 """,
         )
         ui.label("Cola de parches RA").classes("text-md font-semibold")
-        patch_queue_table = ui.table(
+        patch_queue_table = _data_table(
+            card=False,
             columns=[
                 {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
                 {"name": "game", "label": "Juego/hash RA", "field": "game", "align": "left"},
@@ -79,7 +82,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=5,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+        )
         with ui.row().classes("items-center gap-2 text-sm"):
             ui.badge("OK", color="green")
             ui.label("Coincide con DAT / se guardara")
@@ -126,7 +129,7 @@ def build(ctx: UiContext) -> None:
             value="grouped",
             label="Vista",
         ).props("outlined").classes("w-80")
-        coverage_table = ui.table(
+        coverage_table = _data_table(
             columns=[
                 {"name": "visual", "label": "", "field": "visual", "align": "center"},
                 {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
@@ -140,7 +143,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=20,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+        )
         coverage_table.add_slot(
             "body-cell-visual",
             """
@@ -152,11 +155,6 @@ def build(ctx: UiContext) -> None:
                 </q-td>
                 """,
         )
-        coverage_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-        coverage_table.add_slot("body-cell-dat_regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-        coverage_table.add_slot("body-cell-rom_regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-        coverage_table.add_slot("body-cell-keep", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-        coverage_table.add_slot("body-cell-reason", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
         coverage_table.add_slot(
             "body-cell-title",
             """

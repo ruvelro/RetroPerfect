@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from nicegui import ui
 from nicegui.testing import User
@@ -161,3 +163,61 @@ async def test_gui_download_tab_requires_a_dat(user: User, tmp_path, monkeypatch
     await user.open("/")
     user.find("Calcular plan").click()
     await user.should_see("Necesitas un DAT cargado")
+
+
+async def test_gui_todas_las_tablas_conservan_estilo_y_alineacion(user: User) -> None:
+    """Candado del helper _data_table: ninguna tabla puede quedarse sin estilo, y
+    cada columna centrada o a la derecha tiene que traer su slot de celda."""
+    await user.open("/")
+    tables = user.find(ui.table).elements
+    assert len(tables) >= 20
+
+    sin_estilo = [table for table in tables if "compact-table" not in table._classes and "rp-table-card" not in table._classes]
+    assert sin_estilo == [], f"{len(sin_estilo)} tabla(s) renderizadas sin clases de estilo"
+
+    for table in tables:
+        for column in table.columns:
+            if column.get("align") in {"center", "right"} and "compact-table" in table._classes:
+                assert f"body-cell-{column['name']}" in table.slots, f"columna {column['name']} alineada sin slot de celda"
+
+
+async def _add_torrent_source(user: User, location: Path) -> None:
+    user.find("Nombre").type("Mi torrent")
+    user.find("Ítem, URL o carpeta").type(str(location))
+    kind_select = next(element for element in user.find(ui.select).elements if "archive_org" in (element.options or []))
+    kind_select.set_value("torrent")
+    user.find("Añadir fuente").click()
+    await user.should_see("Fuente añadida")
+
+
+async def test_gui_torrent_panel_solo_aparece_con_una_fuente_torrent(user: User, tmp_path, monkeypatch) -> None:
+    """El panel de torrent estorba si no hay ninguna fuente de ese tipo."""
+    from retroperfect import rom_sources
+
+    monkeypatch.setattr(rom_sources, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(rom_sources, "data_dir", lambda: tmp_path)
+    torrent_file = tmp_path / "set.torrent"
+    torrent_file.write_bytes(b"d4:infod4:name3:setee")  # registrar la fuente no lo parsea
+
+    await user.open("/")
+    await user.should_not_see("Recoger lo descargado")
+
+    await _add_torrent_source(user, torrent_file)
+    await user.should_see("Recoger lo descargado")
+
+
+async def test_gui_torrent_pide_un_plan_antes_de_encolar(user: User, tmp_path, monkeypatch) -> None:
+    """Sin plan no hay nada que seleccionar en el cliente: tiene que decirlo, no callar."""
+    from retroperfect import rom_sources
+
+    monkeypatch.setattr(rom_sources, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(rom_sources, "data_dir", lambda: tmp_path)
+    torrent_file = tmp_path / "set.torrent"
+    torrent_file.write_bytes(b"d4:infod4:name3:setee")
+
+    await user.open("/")
+    await _add_torrent_source(user, torrent_file)
+    user.find("Seleccionar en qBittorrent").click()
+    await user.should_see("Calcula primero un plan que incluya archivos de un torrent")
+    user.find("Recoger lo descargado").click()
+    await user.should_see("Calcula primero un plan que incluya archivos de un torrent")

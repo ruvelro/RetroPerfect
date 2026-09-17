@@ -222,7 +222,7 @@ def _process_candidate(
             title=candidate.title,
             file_name=candidate.file_name,
             status="delegated",
-            detail="Añádelo a tu cliente y luego recoge lo descargado con `torrent-collect`.",
+            detail="Lo descarga tu cliente: selecciona los archivos y recógelos desde el panel Torrent de la pestaña Descargar (o con `torrent-queue`/`torrent-collect`).",
         )
     try:
         if candidate.inner_path and candidate.container == "zip":

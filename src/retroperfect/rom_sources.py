@@ -141,13 +141,6 @@ def remove_rom_source(source_id: str) -> bool:
     return True
 
 
-def get_rom_source(source_id: str) -> RomSource:
-    source = next((item for item in list_rom_sources() if item.id == source_id), None)
-    if source is None:
-        raise ValueError(f"Fuente de romsets desconocida: {source_id}")
-    return source
-
-
 def index_cache_dir() -> Path:
     path = data_dir() / "rom-index"
     path.mkdir(parents=True, exist_ok=True)

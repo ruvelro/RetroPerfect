@@ -19,7 +19,8 @@ from ..gui_rows import (
     _ra_icon,
     _unmatched_rows,
 )
-from ..gui_state import _current_platform, _log_activity, state
+from ..gui_state import _current_platform, _log_activity, guarded, state
+from ..gui_widgets import _data_table
 from ..paths import project_state_dir
 from ..platforms import platform_spec
 from ..ra import annotate_scan_with_ra
@@ -45,7 +46,8 @@ def build(ctx: UiContext) -> None:
         scan_progress = ui.linear_progress(value=0, show_value=False).props("instant-feedback").classes("w-full")
         scan_progress_label = ui.label("0% · 0 / 0 archivos · 0 ROMs · 0 matches").classes("text-sm text-gray-600")
         scan_current_file = ui.label("").classes("text-xs text-gray-500")
-        diagnostic_table = ui.table(
+        diagnostic_table = _data_table(
+            card=False,
             columns=[
                 {"name": "status", "label": "", "field": "status", "align": "center"},
                 {"name": "item", "label": "Chequeo", "field": "item", "sortable": True, "align": "left"},
@@ -54,7 +56,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=5,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+        )
         diagnostic_table.add_slot(
             "body-cell-status",
             """
@@ -66,7 +68,7 @@ def build(ctx: UiContext) -> None:
                 </q-td>
                 """,
         )
-        scan_table = ui.table(
+        scan_table = _data_table(
             columns=[
                 {"name": "file", "label": "Archivo", "field": "file", "sortable": True, "align": "left"},
                 {"name": "dat", "label": "DAT", "field": "dat", "sortable": True, "align": "left"},
@@ -76,13 +78,10 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=15,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-        scan_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-        scan_table.add_slot("body-cell-region", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-        scan_table.add_slot("body-cell-tags", '<q-td :props="props" class="rp-right">{{ props.value }}</q-td>')
+        )
         ui.label("No coincidencias y duplicados").classes("text-md font-semibold")
         with ui.grid(columns=2).classes("w-full gap-3"):
-            unmatched_table = ui.table(
+            unmatched_table = _data_table(
                 columns=[
                     {"name": "type", "label": "Tipo", "field": "type", "sortable": True, "align": "left"},
                     {"name": "file", "label": "Archivo", "field": "file", "sortable": True, "align": "left"},
@@ -92,8 +91,8 @@ def build(ctx: UiContext) -> None:
                 ],
                 rows=[],
                 pagination=6,
-            ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-            duplicate_table = ui.table(
+            )
+            duplicate_table = _data_table(
                 columns=[
                     {"name": "kind", "label": "Tipo", "field": "kind", "sortable": True, "align": "left"},
                     {"name": "game", "label": "Juego", "field": "game", "sortable": True, "align": "left"},
@@ -102,71 +101,74 @@ def build(ctx: UiContext) -> None:
                 ],
                 rows=[],
                 pagination=6,
-            ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-            unmatched_table.add_slot("body-cell-region", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+            )
 
         async def scan_click() -> None:
             refresh_active_config()
             if not ctx.source.value:
                 scan_status.text = "Selecciona un origen antes de escanear."
                 return
-            try:
-                state.scan_progress = {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "preparing"}
-                dat_path = Path(ctx.dat.value) if ctx.dat.value else None
-                if dat_path and dat_path.suffix.lower() == ".zip":
-                    imported = await asyncio.to_thread(import_dat_file, dat_path)
-                    dat_path = Path(imported[0].path)
-                    try:
-                        state.suppress_setup_dirty = True
-                        ctx.dat.value = str(dat_path)
-                    finally:
-                        state.suppress_setup_dirty = False
-                scan_status.text = "Cargando e indexando DAT..."
-                catalog = await asyncio.to_thread(parse_dat, dat_path) if dat_path else None
-                dat_index = await asyncio.to_thread(DatIndex, catalog) if catalog else None
-                scan_status.text = "Escaneando ZIPs/ROMs... en romsets grandes puede tardar unos minutos."
+            with guarded(scan_status, "Error de escaneo", busy_label="escaneo de la colección"):
+                try:
+                    state.scan_progress = {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "preparing"}
+                    dat_path = Path(ctx.dat.value) if ctx.dat.value else None
+                    if dat_path and dat_path.suffix.lower() == ".zip":
+                        imported = await asyncio.to_thread(import_dat_file, dat_path)
+                        dat_path = Path(imported[0].path)
+                        try:
+                            state.suppress_setup_dirty = True
+                            ctx.dat.value = str(dat_path)
+                        finally:
+                            state.suppress_setup_dirty = False
+                    scan_status.text = "Cargando e indexando DAT..."
+                    catalog = await asyncio.to_thread(parse_dat, dat_path) if dat_path else None
+                    dat_index = await asyncio.to_thread(DatIndex, catalog) if catalog else None
+                    scan_status.text = "Escaneando ZIPs/ROMs... en romsets grandes puede tardar unos minutos."
 
-                def progress_update(update: dict[str, object]) -> None:
-                    state.scan_progress = update
+                    def progress_update(update: dict[str, object]) -> None:
+                        state.scan_progress = update
 
-                result = await asyncio.to_thread(
-                    scan_directory,
-                    Path(ctx.source.value),
-                    _current_platform(),
-                    dat_index,
-                    dat_path,
-                    progress_update,
-                    project_state_dir() / "scan-cache.sqlite3",
-                )
-                result = await asyncio.to_thread(annotate_scan_with_ra, result)
-                save_scan(result)
-                state.scan = result
-                state.catalog = catalog
-                state.coverage = build_coverage(result, catalog)
-                ctx.update_tab_access()
-                scan_table.rows = [
-                    {
-                        "file": Path(rom.container_path).name if not rom.inner_path else f"{Path(rom.container_path).name} / {rom.inner_path}",
-                        "dat": rom.dat_game.name if rom.dat_game else "",
-                        "ra": " ".join(part for part in [_ra_icon(rom), rom.ra_title or rom.ra_hash_name or ""] if part),
-                        "region": _flag_regions(rom.metadata.regions),
-                        "tags": ", ".join(rom.metadata.tags),
-                    }
-                    for rom in result.roms
-                ]
-                scan_table.update()
-                unmatched_table.rows = _unmatched_rows(result)
-                unmatched_table.update()
-                duplicate_table.rows = _duplicate_rows(result)
-                duplicate_table.update()
-                ra_matches = sum(1 for rom in result.roms if rom.ra_game_id)
-                scan_status.text = f"Escaneados {len(result.roms)} candidatos. Coincidencias RA: {ra_matches}. No reconocidos: {len(result.unmatched_files)}."
-                _log_activity(f"Escaneo completado: {len(result.roms)} ROMs, {ra_matches} RA, {len(result.unmatched_files)} no reconocidos", "OK")
-                ctx.refresh_needed_table()
-                ctx.refresh_coverage()
-                ctx.refresh_decisions()
-            except Exception as exc:
-                scan_status.text = f"Error de escaneo: {exc}"
+                    result = await asyncio.to_thread(
+                        scan_directory,
+                        Path(ctx.source.value),
+                        _current_platform(),
+                        dat_index,
+                        dat_path,
+                        progress_update,
+                        project_state_dir() / "scan-cache.sqlite3",
+                    )
+                    result = await asyncio.to_thread(annotate_scan_with_ra, result)
+                    save_scan(result)
+                    state.scan = result
+                    state.catalog = catalog
+                    state.coverage = build_coverage(result, catalog)
+                    ctx.update_tab_access()
+                    scan_table.rows = [
+                        {
+                            "file": Path(rom.container_path).name if not rom.inner_path else f"{Path(rom.container_path).name} / {rom.inner_path}",
+                            "dat": rom.dat_game.name if rom.dat_game else "",
+                            "ra": " ".join(part for part in [_ra_icon(rom), rom.ra_title or rom.ra_hash_name or ""] if part),
+                            "region": _flag_regions(rom.metadata.regions),
+                            "tags": ", ".join(rom.metadata.tags),
+                        }
+                        for rom in result.roms
+                    ]
+                    scan_table.update()
+                    unmatched_table.rows = _unmatched_rows(result)
+                    unmatched_table.update()
+                    duplicate_table.rows = _duplicate_rows(result)
+                    duplicate_table.update()
+                    ra_matches = sum(1 for rom in result.roms if rom.ra_game_id)
+                    scan_status.text = f"Escaneados {len(result.roms)} candidatos. Coincidencias RA: {ra_matches}. No reconocidos: {len(result.unmatched_files)}."
+                    _log_activity(f"Escaneo completado: {len(result.roms)} ROMs, {ra_matches} RA, {len(result.unmatched_files)} no reconocidos", "OK")
+                    ctx.refresh_needed_table()
+                    ctx.refresh_coverage()
+                    ctx.refresh_decisions()
+                finally:
+                    # Si el escaneo falla a medias, la fase se quedaba en "preparing"
+                    # y el guard de cierre creía que seguía escaneando para siempre.
+                    if state.scan_progress.get("phase") in {"preparing", "start", "scan"}:
+                        state.scan_progress = {**state.scan_progress, "phase": "idle"}
 
         with ui.row():
             ui.button("Actualizar configuración", icon="refresh", on_click=refresh_active_config).props("outline")

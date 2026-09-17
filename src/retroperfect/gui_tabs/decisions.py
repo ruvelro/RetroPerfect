@@ -8,6 +8,7 @@ from ..gui_rows import (
     _panel_class,
 )
 from ..gui_state import _group_rows, _variant_rows, state
+from ..gui_widgets import _data_table
 
 
 def build(ctx: UiContext) -> None:
@@ -25,7 +26,7 @@ def build(ctx: UiContext) -> None:
             ui.label("🔢 revisión")
         selected_group = {"key": ""}
         with ui.grid(columns=2).classes("w-full gap-4"):
-            groups_table = ui.table(
+            groups_table = _data_table(
                 columns=[
                     {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
                     {"name": "variants", "label": "Variantes", "field": "variants", "sortable": True, "align": "right"},
@@ -37,8 +38,8 @@ def build(ctx: UiContext) -> None:
                 rows=[],
                 row_key="group",
                 pagination=12,
-            ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-            variants_table = ui.table(
+            )
+            variants_table = _data_table(
                 columns=[
                     {"name": "choice", "label": "Fijado", "field": "choice", "align": "center"},
                     {"name": "dat", "label": "DAT", "field": "dat", "align": "center"},
@@ -53,16 +54,7 @@ def build(ctx: UiContext) -> None:
                 row_key="id",
                 selection="single",
                 pagination=8,
-            ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-            groups_table.add_slot("body-cell-regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-            groups_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-            variants_table.add_slot("body-cell-choice", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-            variants_table.add_slot("body-cell-dat", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-            variants_table.add_slot("body-cell-regions", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-            variants_table.add_slot("body-cell-revision", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-            variants_table.add_slot("body-cell-ra", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-            variants_table.add_slot("body-cell-tags", '<q-td :props="props" class="rp-right">{{ props.value }}</q-td>')
-            variants_table.add_slot("body-cell-priority", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+            )
 
         def refresh_decisions() -> None:
             groups_table.rows = _group_rows(state.scan)

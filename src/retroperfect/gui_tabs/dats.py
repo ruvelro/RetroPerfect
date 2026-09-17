@@ -16,8 +16,8 @@ from ..gui_rows import (
     _direct_dat_batch_candidates,
     _panel_class,
 )
-from ..gui_state import _current_platform, _log_activity, _online_dat_rows, busy
-from ..gui_widgets import _path_picker
+from ..gui_state import _current_platform, _log_activity, _online_dat_rows, busy, guarded
+from ..gui_widgets import _data_table, _path_picker
 from ..platforms import platform_spec
 
 
@@ -44,13 +44,11 @@ def build(ctx: UiContext) -> None:
             if not selected:
                 dat_manager_status.text = "Selecciona una fuente online."
                 return
-            try:
+            with guarded(dat_manager_status, "No se pudo descargar automáticamente", busy_label="descarga de DAT"):
                 imported = await asyncio.to_thread(download_and_import_source, selected[0]["id"])
                 ctx.dat.value = imported[0].path
                 dat_manager_status.text = f"Descargados/importados {len(imported)} DATs. Activo: {imported[0].name}"
                 refresh_dat_table()
-            except Exception as exc:
-                dat_manager_status.text = f"No se pudo descargar automáticamente: {exc}"
 
         def open_online_click() -> None:
             selected = online_table.selected
@@ -67,13 +65,11 @@ def build(ctx: UiContext) -> None:
             if not custom_url.value:
                 dat_manager_status.text = "Introduce una URL directa."
                 return
-            try:
+            with guarded(dat_manager_status, "No se pudo descargar la URL", busy_label="descarga de DAT"):
                 imported = await asyncio.to_thread(download_and_import_url, custom_url.value, custom_filename.value or None)
                 ctx.dat.value = imported[0].path
                 dat_manager_status.text = f"URL descargada/importada: {imported[0].name}"
                 refresh_dat_table()
-            except Exception as exc:
-                dat_manager_status.text = f"No se pudo descargar la URL: {exc}"
 
         with ui.row():
             ui.button("Descargar fuente", icon="download", on_click=download_online_click).props("color=primary")
@@ -123,7 +119,8 @@ def build(ctx: UiContext) -> None:
             ).props("outlined").classes("w-64")
             batch_limit = ui.number("Límite", value=20, min=1, max=300, step=10).props("outlined").classes("w-32")
             batch_progress = ui.linear_progress(value=0, show_value=False).props("instant-feedback").classes("w-64")
-        batch_table = ui.table(
+        batch_table = _data_table(
+            card=False,
             columns=[
                 {"name": "platform", "label": "Plataforma", "field": "platform", "sortable": True, "align": "left"},
                 {"name": "source", "label": "Fuente", "field": "source", "align": "left"},
@@ -131,7 +128,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=6,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+        )
 
         async def batch_download_click() -> None:
             source_ids = _direct_dat_batch_candidates(batch_scope.value, _current_platform(), int(batch_limit.value or 20))
@@ -169,7 +166,8 @@ def build(ctx: UiContext) -> None:
         ui.separator()
         ui.label("DAT-o-MATIC: cobertura pendiente en RetroPerfect").classes("text-md font-semibold")
         ui.label("La lista se basa en la tabla pública de sistemas de No-Intro; DAT-o-MATIC puede variar y algunos sistemas privados requieren sesión.").classes("text-sm text-gray-600")
-        ui.table(
+        _data_table(
+            card=False,
             columns=[
                 {"name": "group", "label": "Grupo", "field": "group", "sortable": True, "align": "left"},
                 {"name": "platform", "label": "Plataformas/variantes", "field": "platform", "align": "left"},
@@ -177,7 +175,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=DATOMATIC_GAP_ROWS,
             pagination=8,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+        )
 
         ui.separator()
         ui.label("Importación local").classes("text-md font-semibold")
@@ -190,13 +188,11 @@ def build(ctx: UiContext) -> None:
                 if not import_path.value:
                     dat_manager_status.text = "Selecciona un DAT, XML o ZIP."
                     return
-                try:
+                with guarded(dat_manager_status, "No se pudo importar", busy_label="importación de DAT"):
                     imported = await asyncio.to_thread(import_dat_file, Path(import_path.value))
                     ctx.dat.value = imported[0].path
                     dat_manager_status.text = f"Importados {len(imported)} DATs. Usando: {imported[0].name}"
                     refresh_dat_table()
-                except Exception as exc:
-                    dat_manager_status.text = f"No se pudo importar: {exc}"
 
             ui.button("Importar", icon="archive", on_click=import_click).props("color=primary")
         dat_table = ui.table(
@@ -237,7 +233,7 @@ def build(ctx: UiContext) -> None:
             if len(selected) != 2:
                 compare_status.text = "Selecciona exactamente dos DATs para comparar."
                 return
-            try:
+            with guarded(compare_status, "No se pudo comparar", busy_label="comparación de DATs"):
                 comparison = compare_dats(Path(selected[0]["path"]), Path(selected[1]["path"]))
                 compare_status.text = (
                     f"{comparison.left_name} vs {comparison.right_name}: "
@@ -245,8 +241,6 @@ def build(ctx: UiContext) -> None:
                     f"solo primero {comparison.left_only_games} juegos / {comparison.left_only_roms} ROMs; "
                     f"solo segundo {comparison.right_only_games} juegos / {comparison.right_only_roms} ROMs."
                 )
-            except Exception as exc:
-                compare_status.text = f"No se pudo comparar: {exc}"
 
         with ui.row():
             ui.button("Usar seleccionado", icon="check", on_click=use_selected_dat).props("color=primary")

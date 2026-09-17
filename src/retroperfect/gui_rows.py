@@ -721,35 +721,6 @@ def _dat_rows(platform: Platform | None = None) -> list[dict[str, str | int]]:
     ]
 
 
-def _platform_card_rows(brand: str = "Todas", kind: str = "Todos", generation: str = "Todas") -> list[dict[str, str]]:
-    specs = list_platforms()
-    if brand != "Todas":
-        specs = [spec for spec in specs if spec.brand == brand]
-    if kind != "Todos":
-        specs = [spec for spec in specs if spec.kind == kind]
-    if generation != "Todas":
-        specs = [spec for spec in specs if spec.generation == generation]
-    return [
-        {
-            "id": spec.id.value,
-            "icon": spec.icon,
-            "icon_url": spec.icon_url or "",
-            "name": spec.short_name,
-            "brand": spec.brand,
-            "generation": spec.generation,
-            "kind": spec.kind,
-            "extensions": spec.extension_label,
-            "dat": spec.dat_recommended,
-            "romset": spec.romset_recommended,
-            "tip": spec.collection_tip,
-            "ra": spec.ra_label,
-            "complexity": spec.complexity,
-            "notes": spec.notes,
-        }
-        for spec in specs
-    ]
-
-
 def _platform_tab_matches(spec, tab: str) -> bool:
     if tab == "Todas":
         return True

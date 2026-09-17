@@ -7,6 +7,7 @@ DVD y disco duro los rechaza el propio lector; en esos casos las funciones
 degradan a None/DiscError en vez de romper el escaneo."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from .disc import RAW_SYNC, SECTOR_USER_SIZE, DiscError, Iso9660Image
@@ -15,6 +16,8 @@ try:
     import chdimage
 except ImportError:  # plataforma sin wheel de chdimage: se degrada con aviso
     chdimage = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
 
 # chdimage direcciona en LBA absolutos de CD, que incluyen los 150 sectores
 # (2 segundos) de pregap: el sector 0 de datos está en la posición 150.
@@ -26,13 +29,22 @@ def chd_available() -> bool:
 
 
 def chd_track_sha1s(path: Path) -> list[str] | None:
-    """Sha1 hex de cada pista del CHD, o None si no se puede leer."""
+    """Sha1 hex de cada pista del CHD, o None si no se puede leer.
+
+    No lanza nunca: un CHD ilegible no debe abortar el escaneo de una colección
+    entera. El motivo concreto va al log en vez de perderse."""
     if chdimage is None:
+        logger.warning("CHD ignorado porque falta el paquete chdimage: %s", path)
         return None
     try:
         chd = chdimage.open(str(path))
         return [bytes(digest).hex() for digest in chd.track_sha1s()]
+    except (chdimage.ImageError, OSError) as error:
+        # CHD de GDI/DVD, archivo corrupto o ilegible: el binding los reporta todos como ImageError.
+        logger.warning("No se pudieron leer las pistas del CHD %s: %s", path, error)
+        return None
     except Exception:
+        logger.exception("Error inesperado leyendo el CHD %s", path)
         return None
 
 

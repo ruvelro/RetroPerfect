@@ -55,6 +55,22 @@ def busy(label: str) -> Iterator[None]:
             state.busy_operations.pop(label, None)
 
 
+@contextmanager
+def guarded(status: Any, error_prefix: str, *, busy_label: str) -> Iterator[None]:
+    """Envoltorio de las operaciones largas de la GUI: marca la app ocupada,
+    reporta el fallo en la etiqueta de estado y lo registra en Actividad.
+
+    Cada handler repetía este try/except a mano y la mayoría se olvidaba del
+    `busy`, así que el botón Salir no avisaba de la operación en curso.
+    """
+    with busy(busy_label):
+        try:
+            yield
+        except Exception as exc:  # noqa: BLE001 - la GUI reporta el fallo al usuario en vez de propagarlo
+            status.text = f"{error_prefix}: {exc}"
+            _log_activity(f"{error_prefix}: {exc}", "ERROR")
+
+
 
 def reset_state() -> None:
     """Restablece el estado global (usado por los tests)."""

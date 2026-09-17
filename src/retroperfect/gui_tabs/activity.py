@@ -8,7 +8,7 @@ from ..gui_rows import (
     _panel_class,
 )
 from ..gui_state import _activity_rows
-from ..gui_widgets import _open_path
+from ..gui_widgets import _data_table, _open_path
 from ..paths import project_state_dir
 
 
@@ -16,7 +16,7 @@ def build(ctx: UiContext) -> None:
     with ui.tab_panel(ctx.activity_tab).classes("p-0"), ui.column().classes(_panel_class()):
         ui.label("Actividad").classes("text-lg font-semibold")
         ui.label("Registro local de acciones importantes de esta sesión: diagnósticos, escaneos, descargas DAT, planes y RA.").classes("text-sm text-gray-600")
-        activity_table = ui.table(
+        activity_table = _data_table(
             columns=[
                 {"name": "time", "label": "Hora", "field": "time", "sortable": True, "align": "center"},
                 {"name": "level", "label": "Tipo", "field": "level", "sortable": True, "align": "center"},
@@ -24,7 +24,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=_activity_rows(),
             pagination=12,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+        )
 
         def refresh_activity() -> None:
             activity_table.rows = _activity_rows()

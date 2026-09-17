@@ -179,6 +179,28 @@ def _small_button(label: str, icon: str, on_click) -> ui.button:
     return ui.button(label, icon=icon, on_click=on_click).props("dense outline")
 
 
+# Celda centrada de Quasar. Cada tabla repetía este HTML una vez por columna
+# centrada, duplicando el "align" que la columna ya declara.
+_CENTERED_CELL = '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>'
+_RIGHT_CELL = '<q-td :props="props" class="rp-right">{{ props.value }}</q-td>'
+
+
+def _data_table(columns: list[dict], *, card: bool = True, **kwargs) -> ui.table:
+    """Tabla de datos con el estilo común y la alineación ya aplicada.
+
+    Las columnas con `"align": "center"` o `"right"` reciben su slot de celda
+    automáticamente: antes había que declarar la alineación dos veces, en la
+    columna y en un `add_slot` literal, y era fácil que se desincronizaran.
+    """
+    classes = "w-full compact-table rp-table-card" if card else "w-full compact-table"
+    table = ui.table(columns=columns, **kwargs).props("dense flat bordered wrap-cells").classes(classes)
+    for column in columns:
+        slot = {"center": _CENTERED_CELL, "right": _RIGHT_CELL}.get(str(column.get("align", "")))
+        if slot:
+            table.add_slot(f"body-cell-{column['name']}", slot)
+    return table
+
+
 def _open_path(path: Path | str | None) -> None:
     if not path:
         return

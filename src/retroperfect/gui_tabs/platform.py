@@ -13,6 +13,7 @@ from ..gui_rows import (
     _platform_card_rows_for_tab,
 )
 from ..gui_state import _current_platform, state
+from ..gui_widgets import _data_table
 from ..platforms import list_platforms, platform_spec
 
 
@@ -81,7 +82,8 @@ def build(ctx: UiContext) -> None:
         refresh_platform_status()
         ui.separator()
         ui.label("Qué necesito descargar/importar").classes("text-md font-semibold")
-        needed_table = ui.table(
+        needed_table = _data_table(
+            card=False,
             columns=[
                 {"name": "status", "label": "", "field": "status", "align": "center"},
                 {"name": "item", "label": "Elemento", "field": "item", "sortable": True, "align": "left"},
@@ -90,7 +92,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=6,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table")
+        )
         needed_table.add_slot(
             "body-cell-status",
             """

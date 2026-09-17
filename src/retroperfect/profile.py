@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import yaml
 
 from .models import ExportLayout, OutputBucket, ProfileOutput, SelectionProfile
 from .paths import config_dir
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PROFILE = SelectionProfile(
     name="default",
@@ -101,13 +104,15 @@ def save_named_profile(profile: SelectionProfile) -> Path:
 
 
 def list_profiles() -> dict[str, Path]:
+    """Perfiles guardados por nombre. Los ilegibles se listan marcados, no en silencio."""
     profiles = {"default": Path("default")}
     for path in sorted(profiles_dir().glob("*.y*ml")):
         try:
             profile = load_profile(path)
             profiles[profile.name] = path
-        except Exception:
-            profiles[path.stem] = path
+        except (OSError, ValueError, yaml.YAMLError) as error:
+            logger.warning("Perfil ilegible en %s: %s", path, error)
+            profiles[f"{path.stem} ⚠️ (ilegible)"] = path
     return profiles
 
 

@@ -18,8 +18,8 @@ from ..gui_rows import (
     _ra_conflict_rows,
     _scan_group_sample,
 )
-from ..gui_state import _log_activity, busy, state
-from ..gui_widgets import _open_path
+from ..gui_state import _log_activity, busy, guarded, state
+from ..gui_widgets import _data_table, _open_path
 from ..manifest_io import apply_manifest, preflight_manifest, report_manifest, save_manifest
 from ..models import ActionMode
 from ..rules import build_manifest
@@ -40,7 +40,7 @@ def build(ctx: UiContext) -> None:
             ui.label("🌍 región")
             ui.label("💬 idioma")
             ui.label("🔢 revisión")
-        plan_table = ui.table(
+        plan_table = _data_table(
             columns=[
                 {"name": "bucket", "label": "Salida", "field": "bucket", "align": "center"},
                 {"name": "source", "label": "Origen", "field": "source", "align": "left"},
@@ -49,11 +49,9 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=15,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-        plan_table.add_slot("body-cell-bucket", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
-        plan_table.add_slot("body-cell-icons", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+        )
         ui.label("Main vs RetroAchievements").classes("text-md font-semibold")
-        divergence_table = ui.table(
+        divergence_table = _data_table(
             columns=[
                 {"name": "game", "label": "Juego", "field": "game", "sortable": True, "align": "left"},
                 {"name": "main", "label": "Main", "field": "main", "align": "left"},
@@ -62,10 +60,9 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=8,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-        divergence_table.add_slot("body-cell-state", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+        )
         ui.label("Conflictos RetroAchievements").classes("text-md font-semibold")
-        ra_conflict_table = ui.table(
+        ra_conflict_table = _data_table(
             columns=[
                 {"name": "game", "label": "Juego", "field": "game", "sortable": True, "align": "left"},
                 {"name": "main", "label": "Main elegido", "field": "main", "align": "left"},
@@ -74,10 +71,9 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=8,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
-        ra_conflict_table.add_slot("body-cell-state", '<q-td :props="props" class="rp-center">{{ props.value }}</q-td>')
+        )
         ui.label("Simulación de salida").classes("text-md font-semibold")
-        export_tree_table = ui.table(
+        export_tree_table = _data_table(
             columns=[
                 {"name": "folder", "label": "Carpeta", "field": "folder", "sortable": True, "align": "left"},
                 {"name": "files", "label": "Archivos", "field": "files", "sortable": True, "align": "right"},
@@ -87,7 +83,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=8,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+        )
 
         safety_dialog = ui.dialog()
         with safety_dialog, ui.card().classes("w-[760px] max-w-[95vw]"):
@@ -103,14 +99,10 @@ def build(ctx: UiContext) -> None:
                         plan_status.text = "No hay manifiesto que aplicar."
                         safety_dialog.close()
                         return
-                    try:
-                        with busy("aplicando el manifiesto"):
-                            completed = await asyncio.to_thread(apply_manifest, manifest, None, True)  # type: ignore[arg-type]
+                    with guarded(plan_status, "No se aplicó", busy_label="aplicando el manifiesto"):
+                        completed = await asyncio.to_thread(apply_manifest, manifest, None, True)  # type: ignore[arg-type]
                         plan_status.text = f"Aplicadas {len(completed)} operaciones."
-                        safety_dialog.close()
-                    except Exception as exc:
-                        plan_status.text = f"No se aplicó: {exc}"
-                        safety_dialog.close()
+                    safety_dialog.close()
 
                 ui.button("Aplicar manifiesto", icon="play_arrow", on_click=confirm_apply_click).props("color=secondary")
 
@@ -119,7 +111,7 @@ def build(ctx: UiContext) -> None:
             if scan_result is None:
                 plan_status.text = "Escanea una colección antes de crear el plan."
                 return
-            try:
+            with guarded(plan_status, "Error creando plan", busy_label="creación del plan"):
                 state.profile = _profile_from_controls(ctx.controls)
                 profile = state.profile
                 manifest = build_manifest(
@@ -152,8 +144,6 @@ def build(ctx: UiContext) -> None:
                 export_tree_table.update()
                 plan_status.text = f"Manifiesto guardado en {path}"
                 ctx.refresh_coverage()
-            except Exception as exc:
-                plan_status.text = f"Error creando plan: {exc}"
 
         async def safe_plan_click() -> None:
             scan_result = state.scan
@@ -163,7 +153,7 @@ def build(ctx: UiContext) -> None:
             if not ctx.outdir.value:
                 plan_status.text = "El modo prueba segura necesita carpeta de salida."
                 return
-            try:
+            with guarded(plan_status, "Error creando prueba segura", busy_label="creación de la prueba segura"):
                 sample = _scan_group_sample(scan_result, int(safe_sample_limit.value or 25))
                 if sample is None:
                     plan_status.text = "No hay datos de escaneo para muestrear."
@@ -203,8 +193,6 @@ def build(ctx: UiContext) -> None:
                 ctx.refresh_coverage()
                 _log_activity(f"Prueba segura creada: {len(manifest.entries)} operaciones", "OK")
                 plan_status.text = f"Prueba segura guardada en {path}. Solo copia en _prueba_segura."
-            except Exception as exc:
-                plan_status.text = f"Error creando prueba segura: {exc}"
 
         async def apply_click() -> None:
             manifest = state.manifest
@@ -214,7 +202,8 @@ def build(ctx: UiContext) -> None:
             if not apply_confirm.value:
                 plan_status.text = "Marca la confirmación tras revisar el manifiesto."
                 return
-            issues = await asyncio.to_thread(preflight_manifest, manifest)
+            with busy("comprobaciones previas"):
+                issues = await asyncio.to_thread(preflight_manifest, manifest)
             if issues:
                 plan_status.text = "Problemas antes de aplicar: " + " · ".join(issues)
                 _log_activity(f"Preflight de aplicar con {len(issues)} problema(s)", "WARN")

@@ -8,8 +8,8 @@ from nicegui import ui
 
 from ..gui_context import UiContext
 from ..gui_rows import _panel_class
-from ..gui_state import _log_activity, state
-from ..gui_widgets import _open_path
+from ..gui_state import _log_activity, guarded, state
+from ..gui_widgets import _data_table, _open_path
 from ..verify import VERIFY_METRIC_LABELS, VerifyReport, report_verify, verify_collection
 
 STATUS_FILTERS = {
@@ -35,7 +35,7 @@ def build(ctx: UiContext) -> None:
             }
 
         issue_filter = ui.select(STATUS_FILTERS, value="all", label="Filtro").props("outlined").classes("w-96")
-        issues_table = ui.table(
+        issues_table = _data_table(
             columns=[
                 {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
                 {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
@@ -43,7 +43,7 @@ def build(ctx: UiContext) -> None:
             ],
             rows=[],
             pagination=15,
-        ).props("dense flat bordered wrap-cells").classes("w-full compact-table rp-table-card")
+        )
         issues_table.add_slot(
             "body-cell-status",
             """
@@ -77,25 +77,27 @@ def build(ctx: UiContext) -> None:
                 verify_status.text = "El escaneo se hizo sin DAT; selecciona un DAT en Setup y escanea de nuevo."
                 return
             verify_status.text = "Verificando colección..."
-            report = await asyncio.to_thread(verify_collection, state.scan, state.catalog)
-            holder["report"] = report
-            for key, label in VERIFY_METRIC_LABELS:
-                metric_labels[key].text = f"{label}: {getattr(report, key)}"
-            refresh_issues()
-            if report.clean:
-                verify_status.text = "Colección verificada: sin incidencias respecto al DAT. ✔"
-            else:
-                verify_status.text = f"Verificación completada: {len(report.issues)} incidencias (faltan {report.missing}, fuera del DAT {report.unmatched}, mal nombrados {report.misnamed}, duplicados {report.duplicates})."
-            _log_activity(f"Verificación: {len(report.issues)} incidencias", "OK" if report.clean else "WARN")
+            with guarded(verify_status, "Error al verificar", busy_label="verificación de la colección"):
+                report = await asyncio.to_thread(verify_collection, state.scan, state.catalog)
+                holder["report"] = report
+                for key, label in VERIFY_METRIC_LABELS:
+                    metric_labels[key].text = f"{label}: {getattr(report, key)}"
+                refresh_issues()
+                if report.clean:
+                    verify_status.text = "Colección verificada: sin incidencias respecto al DAT. ✔"
+                else:
+                    verify_status.text = f"Verificación completada: {len(report.issues)} incidencias (faltan {report.missing}, fuera del DAT {report.unmatched}, mal nombrados {report.misnamed}, duplicados {report.duplicates})."
+                _log_activity(f"Verificación: {len(report.issues)} incidencias", "OK" if report.clean else "WARN")
 
         async def export_click() -> None:
             report = holder["report"]
             if report is None:
                 verify_status.text = "Verifica la colección antes de exportar el informe."
                 return
-            path = await asyncio.to_thread(report_verify, report, Path(".retroperfect/reports/verify.html"), "html")
-            verify_status.text = f"Informe guardado en {path}"
-            _open_path(path)
+            with guarded(verify_status, "Error al exportar el informe", busy_label="exportación del informe"):
+                path = await asyncio.to_thread(report_verify, report, Path(".retroperfect/reports/verify.html"), "html")
+                verify_status.text = f"Informe guardado en {path}"
+                _open_path(path)
 
         issue_filter.on_value_change(lambda _: refresh_issues())
         with ui.row():
