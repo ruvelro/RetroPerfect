@@ -212,6 +212,16 @@ def test_el_recuento_de_restaurados_no_cuenta_las_lineas_de_log() -> None:
     assert len([line for line in lines if line.startswith("omitido ")]) == 1
 
 
+async def test_gui_ofrece_enlazar_en_vez_de_copiar(user: User) -> None:
+    """La casilla de enlaces duros vive en Plan, que arranca bloqueado por el
+    gate: sin este test solo se vería visitando la pestaña con todo configurado."""
+    await user.open("/")
+    casilla = next(
+        element for element in user.find(ui.checkbox).elements if "Enlazar en vez de copiar" in (element.text or "")
+    )
+    assert casilla.value is False, "enlazar no puede ser el comportamiento por defecto"
+
+
 async def test_gui_todas_las_tablas_conservan_estilo_y_alineacion(user: User) -> None:
     """Candado del helper _data_table: ninguna tabla puede quedarse sin estilo, y
     cada columna centrada o a la derecha tiene que traer su slot de celda."""

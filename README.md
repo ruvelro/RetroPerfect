@@ -293,7 +293,7 @@ Cada tag `v*` publica automáticamente los paquetes de Windows, macOS y Linux en
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 314 tests
+pytest -q            # 315 tests
 ruff check src tests # lint
 mypy                 # type-checking estricto en verde
 ```
