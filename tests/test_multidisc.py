@@ -18,6 +18,7 @@ import pytest
 from retroperfect.coverage import build_coverage
 from retroperfect.dat import DatIndex, parse_dat
 from retroperfect.download_plan import build_download_plan
+from retroperfect.manifest_io import apply_manifest
 from retroperfect.metadata import detect_part, parse_no_intro_name
 from retroperfect.models import ActionMode, OutputBucket, Platform
 from retroperfect.profile import DEFAULT_PROFILE
@@ -247,6 +248,125 @@ def test_verify_no_acusa_de_mal_nombrado_a_las_pistas(tmp_path: Path) -> None:
 
     assert report.misnamed == 0, [issue.detail for issue in report.issues]
     assert report.clean
+
+
+# --- Playlists ---------------------------------------------------------------
+
+
+def test_genera_un_m3u_con_los_discos_en_orden(tmp_path: Path) -> None:
+    """Los emuladores guardan la partida contra el nombre del .m3u: sin él cada
+    disco tiene su propio save y el juego no se puede terminar."""
+    juegos = _tres_discos("Europe")
+    dat = _dat(tmp_path / "psx.xml", juegos)
+    roms = _escribir(tmp_path / "roms", juegos)
+
+    scan = scan_directory(roms, Platform.PS1, dat_index=DatIndex(parse_dat(dat)), dat_path=dat)
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=tmp_path / "out", action=ActionMode.COPY)
+
+    assert len(manifest.playlists) == 1
+    playlist = manifest.playlists[0]
+    assert playlist.title == "Final Fantasy VII"
+    assert playlist.entries == [f"Final Fantasy VII (Europe) (Disc {n}).iso" for n in (1, 2, 3)]
+    assert Path(playlist.path).name == "Final Fantasy VII.m3u"
+
+
+def test_un_juego_de_un_solo_disco_no_genera_playlist(tmp_path: Path) -> None:
+    juegos = {"Juego (Europe)": {"Juego (Europe).iso": b"UNO"}}
+    dat = _dat(tmp_path / "psx.xml", juegos)
+    roms = _escribir(tmp_path / "roms", juegos)
+
+    scan = scan_directory(roms, Platform.PS1, dat_index=DatIndex(parse_dat(dat)), dat_path=dat)
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=tmp_path / "out", action=ActionMode.COPY)
+
+    assert manifest.playlists == []
+
+
+def test_el_disco_10_va_despues_del_2(tmp_path: Path) -> None:
+    """Ordenar los soportes como texto pondría el 10 antes del 2."""
+    juegos = {f"Saga ({'Europe'}) (Disc {n})": {f"Saga (Europe) (Disc {n}).iso": f"D{n}".encode()} for n in (1, 2, 10)}
+    dat = _dat(tmp_path / "psx.xml", juegos)
+    roms = _escribir(tmp_path / "roms", juegos)
+
+    scan = scan_directory(roms, Platform.PS1, dat_index=DatIndex(parse_dat(dat)), dat_path=dat)
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=tmp_path / "out", action=ActionMode.COPY)
+
+    assert manifest.playlists[0].entries == ["Saga (Europe) (Disc 1).iso", "Saga (Europe) (Disc 2).iso", "Saga (Europe) (Disc 10).iso"]
+
+
+def test_aplicar_escribe_el_m3u_junto_a_los_discos(tmp_path: Path) -> None:
+    juegos = _tres_discos("Europe")
+    dat = _dat(tmp_path / "psx.xml", juegos)
+    roms = _escribir(tmp_path / "roms", juegos)
+    salida = tmp_path / "out"
+
+    scan = scan_directory(roms, Platform.PS1, dat_index=DatIndex(parse_dat(dat)), dat_path=dat)
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=salida, action=ActionMode.COPY)
+    apply_manifest(manifest, confirm=True, journal_dir=tmp_path / "journal")
+
+    m3u = salida / "main" / "Final Fantasy VII.m3u"
+    assert m3u.read_text(encoding="utf-8").splitlines() == [f"Final Fantasy VII (Europe) (Disc {n}).iso" for n in (1, 2, 3)]
+
+
+def test_borrar_no_genera_playlists(tmp_path: Path) -> None:
+    juegos = _tres_discos("Europe")
+    dat = _dat(tmp_path / "psx.xml", juegos)
+    roms = _escribir(tmp_path / "roms", juegos)
+
+    scan = scan_directory(roms, Platform.PS1, dat_index=DatIndex(parse_dat(dat)), dat_path=dat)
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=tmp_path / "out", action=ActionMode.DELETE)
+
+    assert manifest.playlists == []
+
+
+# --- Enlaces duros -----------------------------------------------------------
+
+
+def test_link_no_duplica_el_espacio(tmp_path: Path) -> None:
+    """El enlace duro comparte inodo: la colección curada no ocupa el doble."""
+    juegos = {"Juego (Europe)": {"Juego (Europe).iso": b"CONTENIDO"}}
+    dat = _dat(tmp_path / "psx.xml", juegos)
+    roms = _escribir(tmp_path / "roms", juegos)
+    salida = tmp_path / "out"
+
+    scan = scan_directory(roms, Platform.PS1, dat_index=DatIndex(parse_dat(dat)), dat_path=dat)
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=salida, action=ActionMode.COPY)
+    completado = apply_manifest(manifest, confirm=True, link=True, journal_dir=tmp_path / "journal")
+
+    origen = roms / "Juego (Europe).iso"
+    destino = salida / "main" / "Juego (Europe).iso"
+    assert destino.stat().st_ino == origen.stat().st_ino
+    assert any("enlace duro" in linea for linea in completado)
+
+
+def test_sin_link_se_copia_de_verdad(tmp_path: Path) -> None:
+    juegos = {"Juego (Europe)": {"Juego (Europe).iso": b"CONTENIDO"}}
+    dat = _dat(tmp_path / "psx.xml", juegos)
+    roms = _escribir(tmp_path / "roms", juegos)
+    salida = tmp_path / "out"
+
+    scan = scan_directory(roms, Platform.PS1, dat_index=DatIndex(parse_dat(dat)), dat_path=dat)
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=salida, action=ActionMode.COPY)
+    apply_manifest(manifest, confirm=True, journal_dir=tmp_path / "journal")
+
+    origen = roms / "Juego (Europe).iso"
+    destino = salida / "main" / "Juego (Europe).iso"
+    assert destino.stat().st_ino != origen.stat().st_ino
+    assert destino.read_bytes() == origen.read_bytes()
+
+
+def test_link_detecta_que_el_origen_cambio_desde_el_escaneo(tmp_path: Path) -> None:
+    """Enlazar no copia nada, pero la comprobación de que el origen sigue siendo
+    el que se escaneó no puede perderse por el camino."""
+    juegos = {"Juego (Europe)": {"Juego (Europe).iso": b"CONTENIDO"}}
+    dat = _dat(tmp_path / "psx.xml", juegos)
+    roms = _escribir(tmp_path / "roms", juegos)
+
+    scan = scan_directory(roms, Platform.PS1, dat_index=DatIndex(parse_dat(dat)), dat_path=dat)
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=tmp_path / "out", action=ActionMode.COPY)
+    (roms / "Juego (Europe).iso").write_bytes(b"OTRA-COSA")
+
+    with pytest.raises(RuntimeError, match="cambió"):
+        apply_manifest(manifest, confirm=True, link=True, journal_dir=tmp_path / "journal")
 
 
 # --- Descarga ----------------------------------------------------------------

@@ -83,6 +83,7 @@ def apply_manifest(
     hard_delete: bool = False,
     trash_dir: Path | None = None,
     journal_dir: Path | None = None,
+    link: bool = False,
 ) -> list[str]:
     if not confirm:
         raise RuntimeError("No se aplica el manifiesto sin confirmación explícita.")
@@ -91,7 +92,8 @@ def apply_manifest(
         raise RuntimeError("No se puede aplicar el manifiesto:\n- " + "\n- ".join(issues))
     completed: list[str] = []
     try:
-        _apply_entries(manifest, mode, verify, hard_delete, trash_dir, completed)
+        _apply_entries(manifest, mode, verify, hard_delete, trash_dir, completed, link=link)
+        _write_playlists(manifest, completed)
     except Exception as exc:
         _write_journal(manifest, completed, verify, hard_delete, journal_dir, error=str(exc))
         raise
@@ -126,6 +128,29 @@ def _write_journal(
     (root / f"{stamp}-{manifest.id}.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _can_hardlink(source: Path, destination: Path) -> bool:
+    """Un enlace duro solo existe dentro del mismo sistema de archivos."""
+    try:
+        return os.stat(source).st_dev == os.stat(destination.parent).st_dev
+    except OSError:
+        return False
+
+
+def _write_playlists(manifest: Manifest, completed: list[str]) -> None:
+    """Escribe los .m3u de los juegos de varios discos.
+
+    El emulador guarda la partida contra el nombre del .m3u, así que sin él
+    cada disco tiene su propio save y el juego no se puede terminar.
+    """
+    for playlist in manifest.playlists:
+        path = Path(playlist.path)
+        if not [entry for entry in playlist.entries]:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(playlist.entries) + "\n", encoding="utf-8")
+        completed.append(f"playlist {path} ({len(playlist.entries)} discos)")
+
+
 def _apply_entries(
     manifest: Manifest,
     mode: ActionMode | None,
@@ -133,6 +158,7 @@ def _apply_entries(
     hard_delete: bool,
     trash_dir: Path | None,
     completed: list[str],
+    link: bool = False,
 ) -> None:
     session_trash: Path | None = None
     trashed: list[dict[str, str]] = []
@@ -175,7 +201,14 @@ def _apply_entries(
                 if not destination:
                     raise RuntimeError(f"La acción de copia necesita un destino para {source}")
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                if verify:
+                if link and _can_hardlink(source, destination):
+                    # El enlace duro comparte inodo: no hay copia que verificar,
+                    # pero sí se comprueba que el origen no cambió desde el escaneo.
+                    if verify:
+                        _check_source_md5(entry, _file_md5(source))
+                    os.link(source, destination)
+                    completed.append(f"enlazado {source} -> {destination} (enlace duro, sin ocupar espacio)")
+                elif verify:
                     source_md5 = _copy_hashing(source, destination)
                     _check_source_md5(entry, source_md5)
                     _verify_destination(destination, source_md5, source)

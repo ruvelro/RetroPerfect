@@ -348,6 +348,14 @@ class ManifestEntry(BaseModel):
     explanation: list[str] = Field(default_factory=list)
 
 
+class ManifestPlaylist(BaseModel):
+    """Un .m3u que agrupa los discos de un juego, planificado como todo lo demás."""
+
+    path: str
+    title: str
+    entries: list[str] = Field(default_factory=list)
+
+
 class Manifest(BaseModel):
     id: str
     scan_id: str
@@ -356,3 +364,4 @@ class Manifest(BaseModel):
     profile_snapshot: dict[str, Any]
     entries: list[ManifestEntry] = Field(default_factory=list)
     discarded: list[CandidateDecision] = Field(default_factory=list)
+    playlists: list[ManifestPlaylist] = Field(default_factory=list)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from functools import partial
 from pathlib import Path
 
 from nicegui import ui
@@ -31,6 +32,8 @@ def build(ctx: UiContext) -> None:
             action = ui.select(ACTION_LABELS, value=ActionMode.COPY.value, label="Acción").props("outlined").classes("w-72")
             safe_sample_limit = ui.number("Prueba segura", value=25, min=1, max=200, step=5).props("outlined").classes("w-40")
             apply_confirm = ui.checkbox("He revisado el plan y autorizo aplicar cambios", value=False)
+            use_link = ui.checkbox("Enlazar en vez de copiar (mismo disco)", value=False)
+            use_link.tooltip("Crea enlaces duros: la colección curada no ocupa espacio extra. Solo funciona si origen y destino están en la misma unidad; si no, se copia igualmente.")
         plan_status = ui.label("El plan es la lista de operaciones que se guardará antes de copiar, mover o borrar. Primero créalo; después revísalo y aplica.").classes("text-sm text-gray-600")
         with ui.row().classes("items-center gap-2 text-sm"):
             ui.label("Leyenda:")
@@ -100,7 +103,7 @@ def build(ctx: UiContext) -> None:
                         safety_dialog.close()
                         return
                     with guarded(plan_status, "No se aplicó", busy_label="aplicando el manifiesto"):
-                        completed = await asyncio.to_thread(apply_manifest, manifest, None, True)  # type: ignore[arg-type]
+                        completed = await asyncio.to_thread(partial(apply_manifest, manifest, None, True, link=use_link.value))  # type: ignore[arg-type]
                         plan_status.text = f"Aplicadas {len(completed)} operaciones."
                     safety_dialog.close()
 
@@ -142,7 +145,8 @@ def build(ctx: UiContext) -> None:
                 ra_conflict_table.update()
                 export_tree_table.rows = _export_tree_rows(manifest, ctx.outdir.value)
                 export_tree_table.update()
-                plan_status.text = f"Manifiesto guardado en {path}"
+                playlists = f" · {len(manifest.playlists)} playlist(s) .m3u para juegos de varios discos" if manifest.playlists else ""
+                plan_status.text = f"Manifiesto guardado en {path}{playlists}"
                 ctx.refresh_coverage()
 
         async def safe_plan_click() -> None:

@@ -138,6 +138,7 @@ def apply(
     confirm: Annotated[bool, typer.Option("--confirm/--no-confirm")] = False,
     verify: Annotated[bool, typer.Option("--verify/--no-verify", help="Verifica por MD5 cada archivo copiado/movido/parcheado.")] = True,
     hard_delete: Annotated[bool, typer.Option("--hard-delete", help="Borra definitivamente en vez de mover a .retroperfect/trash.")] = False,
+    link: Annotated[bool, typer.Option("--link", help="Enlaza en vez de copiar cuando origen y destino están en el mismo disco: no ocupa espacio extra.")] = False,
 ) -> None:
     """Aplica un manifiesto guardado usando la acción planificada de cada entrada. Requiere --confirm."""
     loaded = load_manifest(manifest)
@@ -145,7 +146,7 @@ def apply(
         console.print(f"[yellow]Aplicar toca tus archivos: {len(loaded.entries)} operaciones en el manifiesto. Revísalo y repite con --confirm.[/yellow]")
         raise typer.Exit(code=1)
     try:
-        completed = apply_manifest(loaded, mode=mode, confirm=confirm, verify=verify, hard_delete=hard_delete)
+        completed = apply_manifest(loaded, mode=mode, confirm=confirm, verify=verify, hard_delete=hard_delete, link=link)
     except RuntimeError as exc:
         # Preflight, modo incompatible u origen cambiado desde el escaneo: son
         # avisos para el usuario, no fallos del programa. Nada se ha tocado.

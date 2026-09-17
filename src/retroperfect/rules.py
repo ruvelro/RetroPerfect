@@ -4,7 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .metadata import parse_no_intro_name, strip_part, with_part
-from .models import ActionMode, CandidateDecision, ExportLayout, Manifest, ManifestEntry, OutputBucket, ProfileOutput, ScannedRom, ScanResult, SelectionProfile
+from .models import ActionMode, CandidateDecision, ExportLayout, Manifest, ManifestEntry, ManifestPlaylist, OutputBucket, ProfileOutput, ScannedRom, ScanResult, SelectionProfile
 from .platforms import platform_spec
 from .ra import RaPatchCandidate, find_ra_patch_candidates
 
@@ -376,6 +376,36 @@ def _selection_group_key(rom: ScannedRom, title_to_parent_keys: dict[tuple[str, 
     return with_part(base, rom.metadata.part)
 
 
+def _part_order(part: str) -> tuple[str, int, str]:
+    """Ordena 'disc 2' antes que 'disc 10', y las caras por letra."""
+    kind, _, value = part.partition(" ")
+    return (kind, int(value) if value.isdigit() else 0, value)
+
+
+def _build_playlists(manifest: Manifest, scan: ScanResult) -> list[ManifestPlaylist]:
+    """Un .m3u por juego de varios discos y salida, con los discos en orden.
+
+    Los emuladores guardan la partida contra el nombre del .m3u, así que sin él
+    cada disco tiene su propio save y el juego no se puede terminar.
+    """
+    rom_by_id = {rom.id: rom for rom in scan.roms}
+    grouped: dict[tuple[OutputBucket, str, str], dict[str, str]] = defaultdict(dict)
+    for entry in manifest.entries:
+        rom = rom_by_id.get(entry.rom_id)
+        if rom is None or not rom.metadata.part or not entry.destination_path:
+            continue
+        destination = Path(entry.destination_path)
+        grouped[(entry.bucket, str(destination.parent), rom.metadata.title)].setdefault(rom.metadata.part, destination.name)
+
+    playlists: list[ManifestPlaylist] = []
+    for (_bucket, folder, title), discos in sorted(grouped.items(), key=lambda item: (item[0][2].lower(), item[0][1])):
+        if len(discos) < 2:  # un solo disco no necesita playlist
+            continue
+        ordenados = [name for _part, name in sorted(discos.items(), key=lambda item: _part_order(item[0]))]
+        playlists.append(ManifestPlaylist(path=str(Path(folder) / f"{title}.m3u"), title=title, entries=ordenados))
+    return playlists
+
+
 def build_manifest(
     scan: ScanResult,
     profile: SelectionProfile,
@@ -485,6 +515,8 @@ def build_manifest(
                         explanation=explanation,
                     )
                 )
+    if action != ActionMode.DELETE:
+        manifest.playlists = _build_playlists(manifest, scan)
     if action == ActionMode.DELETE and selected_buckets:
         discard_reasons: dict[str, list[str]] = {}
         for decision in manifest.discarded:
