@@ -12,7 +12,7 @@ from .dat_manager import compare_dats, download_and_import_source, download_and_
 from .dat_sources import list_dat_sources
 from .download_plan import build_download_plan, human_size, resolve_remote_files
 from .downloader import collect_downloads, run_download_plan
-from .manifest_io import apply_manifest, load_manifest, report_manifest, save_manifest
+from .manifest_io import REPORT_FORMATS, apply_manifest, load_manifest, report_manifest, save_manifest
 from .models import ActionMode, ExportLayout, OutputBucket, Platform
 from .paths import project_state_dir
 from .platforms import platform_options, platform_spec
@@ -141,7 +141,16 @@ def apply(
 ) -> None:
     """Aplica un manifiesto guardado usando la acción planificada de cada entrada. Requiere --confirm."""
     loaded = load_manifest(manifest)
-    completed = apply_manifest(loaded, mode=mode, confirm=confirm, verify=verify, hard_delete=hard_delete)
+    if not confirm:
+        console.print(f"[yellow]Aplicar toca tus archivos: {len(loaded.entries)} operaciones en el manifiesto. Revísalo y repite con --confirm.[/yellow]")
+        raise typer.Exit(code=1)
+    try:
+        completed = apply_manifest(loaded, mode=mode, confirm=confirm, verify=verify, hard_delete=hard_delete)
+    except RuntimeError as exc:
+        # Preflight, modo incompatible u origen cambiado desde el escaneo: son
+        # avisos para el usuario, no fallos del programa. Nada se ha tocado.
+        console.print(f"[red]No se aplicó el manifiesto:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
     for line in completed:
         console.print(line)
 
@@ -153,10 +162,66 @@ def report(
     output: Annotated[Path | None, typer.Option("--output")] = None,
 ) -> None:
     """Genera un reporte a partir de un manifiesto."""
+    if format not in REPORT_FORMATS:
+        raise typer.BadParameter(f"Formato desconocido '{format}'. Usa uno de: {', '.join(sorted(REPORT_FORMATS))}.", param_hint="--format")
     loaded = load_manifest(manifest)
     output_path = output or Path(f".retroperfect/reports/{loaded.id}.{format}")
     report_manifest(loaded, output_path, format)
-    console.print(f"[green]Report saved to {output_path}[/green]")
+    console.print(f"[green]Informe guardado en {output_path}[/green]")
+
+
+@app.command()
+def audit(
+    platform: Annotated[str, typer.Option("--platform")] = "nes",
+    input: Annotated[Path, typer.Option("--input", exists=True, file_okay=True, dir_okay=True, readable=True)] = Path("."),
+    dat: Annotated[Path | None, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    scan: Annotated[Path | None, typer.Option("--scan", exists=True, file_okay=True, dir_okay=False, readable=True, help="Reutiliza un escaneo guardado en vez de volver a escanear.")] = None,
+    manifest: Annotated[Path | None, typer.Option("--manifest", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    workers: Annotated[int | None, typer.Option("--workers", min=1)] = None,
+) -> None:
+    """Nota de salud de la colección, con la cobertura y los avisos de la pestaña Resumen."""
+    from .coverage import build_coverage
+    from .diagnostics import build_patch_queue, build_perfect_audit, detect_dat_warnings
+
+    parsed_platform = _platform(platform)
+    catalog = parse_dat(dat) if dat else None
+    if scan:
+        scan_result = load_scan(scan)
+    else:
+        cache_path = project_state_dir() / "scan-cache.sqlite3"
+        scan_result = scan_directory(input, parsed_platform, dat_index=DatIndex(catalog) if catalog else None, dat_path=dat, hash_cache=cache_path, workers=workers)
+    loaded_manifest = load_manifest(manifest) if manifest else None
+    coverage = build_coverage(scan_result, catalog, loaded_manifest)
+    summary = build_perfect_audit(coverage, scan_result, loaded_manifest)
+
+    console.print(f"[bold]Nota: {summary.score}/100[/bold] · {summary.verdict}")
+    table = Table(title="Auditoría de la colección")
+    table.add_column("Métrica")
+    table.add_column("Valor", justify="right")
+    for label, value in [
+        ("Juegos completos", summary.complete_games),
+        ("Faltantes", summary.missing_games),
+        ("Fuera del DAT", summary.unmatched_games),
+        ("Grupos duplicados", summary.duplicate_groups),
+        ("Con RetroAchievements", summary.ra_covered_games),
+        ("Sin RetroAchievements", summary.ra_missing_games),
+        ("Parches pendientes", summary.patch_pending),
+    ]:
+        table.add_row(label, str(value))
+    console.print(table)
+    for note in summary.notes:
+        console.print(f"  · {note}")
+
+    warnings = detect_dat_warnings(parsed_platform, input, dat, scan_result)
+    if warnings:
+        console.print("\n[bold]Avisos[/bold]")
+        for row in warnings:
+            color = {"OK": "green", "WARN": "yellow", "MISS": "red"}.get(row.status, "blue")
+            console.print(f"  [{color}]{row.status}[/{color}] {row.item}: {row.detail}" + (f" → {row.recommendation}" if row.recommendation else ""))
+
+    pending = [row for row in build_patch_queue(loaded_manifest) if row.status != "OK"]
+    if pending:
+        console.print(f"\n{len(pending)} parche(s) de RetroAchievements pendientes de resolver.")
 
 
 @app.command()
@@ -528,7 +593,12 @@ def trash_restore(session: Annotated[str, typer.Argument(help="Nombre de la sesi
     """Restaura los archivos de una sesión de papelera a sus rutas originales."""
     from .trash import restore_session
 
-    for line in restore_session(session):
+    try:
+        lines = list(restore_session(session))
+    except RuntimeError as exc:
+        console.print(f"[red]No se pudo restaurar:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
+    for line in lines:
         console.print(line)
 
 

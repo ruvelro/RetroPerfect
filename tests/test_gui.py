@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -163,6 +164,52 @@ async def test_gui_download_tab_requires_a_dat(user: User, tmp_path, monkeypatch
     await user.open("/")
     user.find("Calcular plan").click()
     await user.should_see("Necesitas un DAT cargado")
+
+
+async def test_gui_lista_las_sesiones_de_papelera(user: User, tmp_path, monkeypatch) -> None:
+    """Borrar mueve a la papelera; deshacerlo tenía que poder hacerse sin la terminal.
+
+    Aquí se prueba el cableado (la tabla y el guard sin selección). La restauración
+    en sí se prueba en test_trash.py: cruzar un hilo desde un handler no es fiable
+    en el simulador cuando corre la suite entera.
+    """
+    from retroperfect import trash
+
+    monkeypatch.chdir(tmp_path)
+    original = tmp_path / "roms" / "Juego (Europe).nes"
+    original.parent.mkdir(parents=True)
+    session_dir = trash.trash_root() / "20260917-120000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "Juego (Europe).nes").write_bytes(b"ROM")
+    (session_dir / "index.json").write_text(
+        json.dumps({"created": "2026-09-17 12:00", "files": [{"trashed": "Juego (Europe).nes", "original": str(original)}]}),
+        encoding="utf-8",
+    )
+
+    await user.open("/")
+    trash_table = next(
+        element
+        for element in user.find(ui.table).elements
+        if {column["name"] for column in element.columns} == {"name", "created", "files", "size", "restorable"}
+    )
+    assert trash_table.rows == [
+        {"name": "20260917-120000", "created": "2026-09-17 12:00", "files": 1, "size": "3 B", "restorable": "sí"}
+    ]
+
+    user.find("Restaurar sesión").click()
+    await user.should_see("Selecciona la sesión que quieres restaurar")
+
+
+def test_el_recuento_de_restaurados_no_cuenta_las_lineas_de_log() -> None:
+    """restore_session devuelve un log (incluye omitidos y el aviso de borrado de
+    la sesión), no una lista de archivos: contarlo entero infla la cifra."""
+    lines = [
+        "restaurado Juego (Europe).nes -> /roms/Juego (Europe).nes",
+        "omitido (el original ya existe): /roms/Otro.nes",
+        "sesión 20260917-120000 eliminada de la papelera",
+    ]
+    assert sum(1 for line in lines if line.startswith("restaurado ")) == 1
+    assert len([line for line in lines if line.startswith("omitido ")]) == 1
 
 
 async def test_gui_todas_las_tablas_conservan_estilo_y_alineacion(user: User) -> None:

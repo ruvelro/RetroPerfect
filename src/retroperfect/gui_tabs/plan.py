@@ -240,5 +240,6 @@ def build(ctx: UiContext) -> None:
             ui.button("Generar reporte", icon="article", on_click=report_click).props("outline")
             ui.button("Abrir salida", icon="folder_open", on_click=lambda: _open_path(ctx.outdir.value)).props("outline")
             ui.button("Abrir reportes", icon="topic", on_click=lambda: _open_path(Path(".retroperfect/reports"))).props("outline")
-            ui.button("Abrir papelera", icon="delete_sweep", on_click=lambda: _open_path(Path(".retroperfect/trash"))).props("outline")
             ui.button("Aplicar", icon="play_arrow", on_click=apply_click).props("color=secondary")
+
+        ui.label("Lo que se borre va a la papelera, restaurable desde la pestaña Actividad.").classes("text-sm text-gray-600")

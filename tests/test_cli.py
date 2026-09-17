@@ -384,6 +384,32 @@ def test_report_rechaza_un_formato_desconocido(entorno: Path) -> None:
 # --- verify ------------------------------------------------------------------
 
 
+def test_audit_puntua_la_coleccion_y_lista_los_avisos(entorno: Path) -> None:
+    """El audit de la pestaña Resumen no existía en la CLI."""
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload, "Perdido (Europe)": b"FALTA"})
+
+    result = runner.invoke(app, ["audit", "--input", str(roms), "--dat", str(dat)])
+
+    assert result.exit_code == 0, result.output
+    assert "Nota:" in result.output
+    assert "Auditoría de la colección" in result.output
+    assert "Faltantes" in result.output
+
+
+def test_audit_reutiliza_un_escaneo_guardado_sin_volver_a_escanear(entorno: Path) -> None:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+    assert runner.invoke(app, ["scan", "--input", str(roms), "--dat", str(dat)]).exit_code == 0
+
+    result = runner.invoke(app, ["audit", "--scan", ".retroperfect/scans/latest.json", "--dat", str(dat)])
+
+    assert result.exit_code == 0, result.output
+    assert "Nota:" in result.output
+
+
 def test_verify_de_una_coleccion_completa_sale_con_cero(entorno: Path) -> None:
     payload = b"ROM"
     roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})

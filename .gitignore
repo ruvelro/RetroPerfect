@@ -13,3 +13,7 @@ build/
 *.spec
 
 .claude/settings.local.json
+
+# Cobertura de tests
+.coverage
+htmlcov/

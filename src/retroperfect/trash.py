@@ -34,10 +34,8 @@ def list_sessions(root: Path | None = None) -> list[TrashSession]:
         index_path = session_dir / "index.json"
         created = ""
         if index_path.exists():
-            try:
-                created = json.loads(index_path.read_text(encoding="utf-8")).get("created", "")
-            except (OSError, json.JSONDecodeError):
-                created = ""
+            index = _read_index(index_path)
+            created = str(index.get("created", ""))
         files = [item for item in session_dir.iterdir() if item.is_file() and item.name != "index.json"]
         sessions.append(
             TrashSession(
@@ -52,6 +50,19 @@ def list_sessions(root: Path | None = None) -> list[TrashSession]:
     return sessions
 
 
+def _read_index(index_path: Path) -> dict:
+    """Índice de una sesión de papelera, o vacío si no se puede leer.
+
+    Cualquier cosa puede acabar en `.retroperfect/trash`, y la pestaña Plan
+    lista las sesiones al construirse: un índice corrupto no puede tumbar la GUI.
+    """
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return index if isinstance(index, dict) else {}
+
+
 def restore_session(name: str, root: Path | None = None) -> list[str]:
     session_dir = trash_root(root) / name
     index_path = session_dir / "index.json"
@@ -59,7 +70,9 @@ def restore_session(name: str, root: Path | None = None) -> list[str]:
         raise RuntimeError(f"No existe la sesión de papelera '{name}'.")
     if not index_path.exists():
         raise RuntimeError(f"La sesión '{name}' no tiene índice de restauración; restaura manualmente desde {session_dir}.")
-    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index = _read_index(index_path)
+    if not index.get("files"):
+        raise RuntimeError(f"El índice de la sesión '{name}' está vacío o corrupto; restaura manualmente desde {session_dir}.")
     log: list[str] = []
     remaining = 0
     for entry in index.get("files", []):

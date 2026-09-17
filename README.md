@@ -132,6 +132,9 @@ retroperfect scan --platform nes --input ~/roms/nes
 # 3. ¿Cómo está mi colección? (no toca nada)
 retroperfect verify --platform nes --input ~/roms/nes --dat ruta/al/dat.xml
 
+# 3b. Nota de salud, cobertura y avisos, todo junto
+retroperfect audit --platform nes --input ~/roms/nes --dat ruta/al/dat.xml
+
 # 4. Crea el plan de curación y revísalo
 retroperfect plan --scan .retroperfect/scans/latest.json --output-dir ~/roms-curadas
 retroperfect report --manifest .retroperfect/manifests/latest.json --format html
@@ -237,6 +240,8 @@ retroperfect torrent-collect --torrent set.torrent --dat nes.dat \
 
 Con **qBittorrent** la selección es automática vía su Web API (actívala en sus ajustes). Con **cualquier otro cliente** —Transmission, Deluge, rTorrent…— el flujo es el mismo: `torrent-queue` te dice qué archivos marcar, los marcas a mano, y `torrent-collect` hace el resto sin saber ni preguntar quién lo descargó. Si tu qBittorrent pide credenciales, pásalas por las variables `RETROPERFECT_QBT_USER` y `RETROPERFECT_QBT_PASS`; no se guardan en ningún archivo.
 
+En la **interfaz gráfica** no hace falta la terminal: al registrar una fuente de tipo `torrent` aparece el panel **Torrent** al final de la pestaña Descargar, con los mismos dos pasos — seleccionar en qBittorrent los archivos que te faltan y, cuando tu cliente termine, recoger lo descargado verificándolo contra el DAT.
+
 Dos detalles que conviene saber:
 
 - **No apuntes tu cliente al romset.** `torrent-collect` **copia**, no mueve, precisamente para que el cliente siga sembrando desde su carpeta, y para que en tu colección solo entre lo verificado. Los archivos a medias se detectan por tamaño y los que no cuadran con el DAT no pasan.
@@ -249,6 +254,8 @@ retroperfect trash-list                    # sesiones de borrado, con tamaño
 retroperfect trash-restore 20260813-181500 # restaura a las rutas originales
 retroperfect trash-empty --confirm         # vaciado definitivo
 ```
+
+En la interfaz gráfica, la papelera vive al final de la pestaña **Actividad** (no en Plan: restaurar es recuperarse de algo ya hecho, así que no exige tener el Setup validado ni un escaneo). Selecciona la sesión y pulsa *Restaurar sesión*; lo que no se pueda devolver porque el original ya existe se avisa en el registro en vez de pisarlo.
 
 ## Conceptos en 60 segundos
 
@@ -282,12 +289,12 @@ Cada tag `v*` publica automáticamente los paquetes de Windows, macOS y Linux en
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 185 tests
+pytest -q            # 284 tests
 ruff check src tests # lint
 mypy                 # type-checking estricto en verde
 ```
 
-La CI ejecuta las tres cosas en Python 3.11, 3.12 y 3.13.
+La CI ejecuta las tres cosas en Python 3.11, 3.12, 3.13 y 3.14.
 
 ## Hoja de ruta
 

@@ -279,7 +279,14 @@ def _read_entry_source(source_path: str, inner_path: str | None) -> bytes:
     return source.read_bytes()
 
 
+REPORT_FORMATS = ("html", "json", "csv")
+
+
 def report_manifest(manifest: Manifest, path: Path, fmt: str) -> Path:
+    if fmt not in REPORT_FORMATS:
+        # Antes creaba el directorio de informes y fallaba después con un ValueError
+        # sin capturar, dejando restos de una operación que nunca iba a terminar.
+        raise ValueError(f"Formato de informe desconocido: {fmt}. Usa uno de: {', '.join(REPORT_FORMATS)}.")
     path.parent.mkdir(parents=True, exist_ok=True)
     if fmt == "json":
         path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")

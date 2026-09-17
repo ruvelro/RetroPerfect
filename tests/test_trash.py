@@ -68,3 +68,30 @@ def test_empty_trash_removes_everything(tmp_path: Path) -> None:
 def test_restore_unknown_session_fails(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="No existe"):
         restore_session("20990101-000000", root=tmp_path / "trash")
+
+
+def test_un_indice_corrupto_no_tumba_el_listado(tmp_path: Path) -> None:
+    """La pestaña Plan lista las sesiones al construirse: un índice con cualquier
+    contenido no puede reventar la GUI entera."""
+    trash = tmp_path / "trash"
+    for name, content in [("20260101-000000", "[]"), ("20260102-000000", "{no es json"), ("20260103-000000", '"texto"')]:
+        session = trash / name
+        session.mkdir(parents=True)
+        (session / "rom.nes").write_bytes(b"ROM")
+        (session / "index.json").write_text(content, encoding="utf-8")
+
+    sessions = list_sessions(trash)
+
+    assert [session.name for session in sessions] == ["20260103-000000", "20260102-000000", "20260101-000000"]
+    assert all(session.created == "" and session.files == 1 for session in sessions)
+
+
+def test_restaurar_con_indice_corrupto_avisa_en_vez_de_romper(tmp_path: Path) -> None:
+    trash = tmp_path / "trash"
+    session = trash / "20260101-000000"
+    session.mkdir(parents=True)
+    (session / "rom.nes").write_bytes(b"ROM")
+    (session / "index.json").write_text("[]", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="corrupto"):
+        restore_session("20260101-000000", root=trash)
