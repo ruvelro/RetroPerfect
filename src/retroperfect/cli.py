@@ -235,7 +235,7 @@ def verify(
     output: Annotated[Path | None, typer.Option("--output", help="Ruta del informe (por defecto .retroperfect/reports/verify.<ext>).")] = None,
 ) -> None:
     """Verifica la colección contra un DAT: faltantes, sobrantes, mal nombrados y duplicados."""
-    from .verify import report_verify, verify_collection
+    from .verify import VERIFY_METRIC_LABELS, report_verify, verify_collection
 
     parsed_platform = _platform(platform)
     catalog = parse_dat(dat)
@@ -254,13 +254,10 @@ def verify(
     summary = Table(title="Verificación de colección")
     summary.add_column("Métrica")
     summary.add_column("Valor", justify="right")
-    summary.add_row("Juegos en el DAT", str(report.dat_games))
-    summary.add_row("Juegos en el romset", str(report.romset_games))
-    summary.add_row("Coincidentes", str(report.matched_games))
-    summary.add_row("Faltantes", str(report.missing))
-    summary.add_row("Fuera del DAT", str(report.unmatched))
-    summary.add_row("Mal nombrados", str(report.misnamed))
-    summary.add_row("Duplicados", str(report.duplicates))
+    # Derivado de la lista compartida: cuando se añadió "Sets mixtos", esta
+    # tabla se quedó atrás por estar escrita a mano.
+    for key, label in VERIFY_METRIC_LABELS:
+        summary.add_row(label, str(getattr(report, key)))
     console.print(summary)
 
     if report.clean:

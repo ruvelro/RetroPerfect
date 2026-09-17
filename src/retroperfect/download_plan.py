@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from .metadata import parse_no_intro_name
+from .metadata import parse_no_intro_name, with_part
 from .models import DatCatalog, DatGame, DetectedMetadata, OutputBucket, Platform, ProfileOutput, ScanResult, SelectionProfile
 from .rom_sources import RemoteFile, RomSource, resolve_source
 from .rules import STRICT_1G1R_TAGS, priority_index
@@ -207,7 +207,11 @@ def group_key(game: DatGame) -> str:
     los DAT sin esas relaciones dejarían cada región como juego suelto y el filtro
     1G1R no descartaría nada.
     """
-    return parse_no_intro_name(game.cloneof or game.description or game.name).title
+    metadata = parse_no_intro_name(game.cloneof or game.description or game.name)
+    # El soporte entra en la clave: si no, con el disco 1 en la colección se
+    # daba el juego por completo y los discos 2 y 3 no se ofrecían nunca.
+    part = metadata.part or parse_no_intro_name(game.description or game.name).part
+    return with_part(metadata.title, part)
 
 
 def _present_groups(scan: ScanResult | None) -> set[str]:

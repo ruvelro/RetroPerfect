@@ -242,6 +242,24 @@ class DatIndex:
         )
 
 
+def dat_rom_for_hashes(game: DatGame, hashes) -> DatRom | None:
+    """Entrada del DAT que corresponde a un archivo concreto del juego.
+
+    Un juego puede declarar varias ROMs (un .cue y sus .bin), así que dar por
+    hecho que es la primera hace que se acuse de mal nombrado a todo lo demás,
+    con el consejo de renombrarlas todas igual."""
+    candidates = [(hashes.sha1, hashes.md5, hashes.crc32, hashes.size)]
+    if hashes.payload_sha1:
+        candidates.append((hashes.payload_sha1, hashes.payload_md5, hashes.payload_crc32, hashes.payload_size))
+    for sha1, md5, crc32, size in candidates:
+        for rom in game.roms:
+            if (rom.sha1 and rom.sha1 == (sha1 or "").lower()) or (rom.md5 and rom.md5 == (md5 or "").lower()):
+                return rom
+            if rom.crc32 and rom.crc32 == (crc32 or "").lower() and (rom.size is None or rom.size == size):
+                return rom
+    return game.roms[0] if game.roms else None
+
+
 def _infer_releases(game: DatGame) -> None:
     candidates = [game.description or game.name, game.name, *[rom.name for rom in game.roms]]
     for candidate in candidates:

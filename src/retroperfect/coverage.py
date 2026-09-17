@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from .metadata import parse_no_intro_name
+from .metadata import parse_no_intro_name, with_part
 from .models import DatCatalog, Manifest, ScanResult
 
 
@@ -119,20 +119,22 @@ def build_coverage(scan: ScanResult, catalog: DatCatalog | None = None, manifest
 
 
 def _display_title(key: str, dat_games: list, roms: list) -> str:
+    """Título mostrado al usuario, con el soporte cuando lo hay: si no, las
+    filas de los tres discos de un juego salen con el mismo nombre y no se sabe
+    cuál falta."""
     if dat_games:
-        return parse_no_intro_name(dat_games[0].description or dat_games[0].name).title
+        metadata = parse_no_intro_name(dat_games[0].description or dat_games[0].name)
+        return with_part(metadata.title, metadata.part)
     if roms:
-        return roms[0].metadata.title
+        return with_part(roms[0].metadata.title, roms[0].metadata.part)
     return Path(key).stem
 
 
 def _dat_coverage_key(game) -> str:
-    if game.cloneof:
-        return game.group_key
-    return parse_no_intro_name(game.description or game.name).title
+    metadata = parse_no_intro_name(game.description or game.name)
+    return with_part(game.group_key if game.cloneof else metadata.title, metadata.part)
 
 
 def _rom_coverage_key(rom) -> str:
-    if rom.dat_game and rom.dat_game.cloneof:
-        return rom.dat_game.group_key
-    return rom.metadata.title
+    base = rom.dat_game.group_key if rom.dat_game and rom.dat_game.cloneof else rom.metadata.title
+    return with_part(base, rom.metadata.part)

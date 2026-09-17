@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..diagnostics import build_patch_queue
+from ..metadata import with_part
 from ..models import ExportLayout, OutputBucket, ProfileOutput, ScannedRom, SelectionProfile
 from ..profile import list_profiles
 
@@ -17,9 +18,10 @@ TAGS = ["Beta", "Proto", "Prototype", "Demo", "Sample", "Aftermarket", "Homebrew
 
 
 def _rom_summary_key(rom) -> str:
-    if rom.dat_game and rom.dat_game.cloneof:
-        return rom.dat_game.group_key
-    return rom.metadata.title
+    # El soporte tiene que ir en la clave igual que en rules._selection_group_key:
+    # si no, el override manual de un disco no casa con su grupo del manifiesto.
+    base = rom.dat_game.group_key if rom.dat_game and rom.dat_game.cloneof else rom.metadata.title
+    return with_part(base, rom.metadata.part)
 
 
 def _scan_group_sample(scan, limit: int):

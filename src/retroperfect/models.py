@@ -264,6 +264,10 @@ class DetectedMetadata(BaseModel):
     version: str | None = None
     revision: int = 0
     tags: list[str] = Field(default_factory=list)
+    # Parte de un juego repartido en varios soportes ("disc 2", "side a"). El
+    # título no la conserva, así que sin esto los discos de un mismo juego
+    # compiten entre sí en el 1G1R y solo sobrevive uno.
+    part: str | None = None
 
 
 class ScannedRom(BaseModel):

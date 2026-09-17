@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
-from .metadata import parse_no_intro_name
+from .metadata import parse_no_intro_name, strip_part, with_part
 from .models import ActionMode, CandidateDecision, ExportLayout, Manifest, ManifestEntry, OutputBucket, ProfileOutput, ScannedRom, ScanResult, SelectionProfile
 from .platforms import platform_spec
 from .ra import RaPatchCandidate, find_ra_patch_candidates
@@ -141,8 +141,12 @@ def _strict_exclusions(rom: ScannedRom) -> list[str]:
     return sorted(_rom_tags(rom) & STRICT_1G1R_TAGS)
 
 
-def _score(rom: ScannedRom, output: ProfileOutput) -> tuple:
+def _score(rom: ScannedRom, output: ProfileOutput, complete: set[str] | None = None) -> tuple:
     return (
+        # Una variante que trae todos los discos gana a otra a la que le falte
+        # alguno, aunque su región puntúe mejor. En juegos de un solo soporte
+        # este término es siempre 0 y no cambia nada.
+        0 if not rom.metadata.part or not complete or variant_key(rom) in complete else 1,
         priority_index(rom.metadata.regions, output.region_priority),
         priority_index(rom.metadata.languages, output.language_priority),
         0 if output.prefer_ra_compatible and rom.ra_game_id else 1,
@@ -241,37 +245,98 @@ def _patch_destination_name(candidate: RaPatchCandidate, base: ScannedRom) -> st
     return f"{Path(base.container_path).stem} [RA patched]{Path(base.container_path).suffix}"
 
 
-def select_best(candidates: list[ScannedRom], output: ProfileOutput, override_rom_id: str | None = None) -> tuple[ScannedRom | None, list[CandidateDecision]]:
-    decisions: list[CandidateDecision] = []
+def variant_key(rom: ScannedRom) -> str:
+    """Variante a la que pertenece el archivo, sin el soporte: 'FFVII (Europe)'."""
+    return strip_part(rom.dat_game.name if rom.dat_game else Path(rom.source_path).stem)
+
+
+def complete_variants(scan: ScanResult) -> set[str]:
+    """Variantes que traen todos los soportes que hay del juego.
+
+    Elegir disco a disco por prioridad de región puede dejar el disco 1 europeo
+    junto al 2 americano, que no arranca. Si alguna variante está completa, se
+    prefiere entera; si ninguna lo está, se conserva lo que haya y se avisa.
+    """
+    parts_by_title: dict[str, set[str]] = defaultdict(set)
+    parts_by_variant: dict[str, set[str]] = defaultdict(set)
+    for rom in scan.roms:
+        if not rom.metadata.part:
+            continue
+        parts_by_title[rom.metadata.title].add(rom.metadata.part)
+        parts_by_variant[variant_key(rom)].add(rom.metadata.part)
+    return {
+        variant_key(rom)
+        for rom in scan.roms
+        if rom.metadata.part and parts_by_variant[variant_key(rom)] >= parts_by_title[rom.metadata.title]
+    }
+
+
+def game_siblings(winner: ScannedRom, candidates: list[ScannedRom]) -> list[ScannedRom]:
+    """Los demás archivos del mismo juego del DAT que el ganador.
+
+    Un juego de Redump son varios archivos (un .cue y sus .bin), y el DAT los
+    declara juntos en una sola entrada. Elegir una variante significa quedarse
+    con todos sus archivos: quedarse solo con el mejor puntuado dejaba un .bin
+    suelto sin su .cue, es decir, un juego que no arranca.
+    """
+    if winner.dat_game is None or len(winner.dat_game.roms) < 2:
+        return []
+    seen = {winner.hashes.md5}
+    siblings: list[ScannedRom] = []
+    for rom in candidates:
+        if rom.id == winner.id or rom.dat_game is None or rom.dat_game.name != winner.dat_game.name:
+            continue
+        if rom.hashes.md5 in seen:  # copias del mismo archivo: basta una
+            continue
+        seen.add(rom.hashes.md5)
+        siblings.append(rom)
+    return siblings
+
+
+def select_best(
+    candidates: list[ScannedRom],
+    output: ProfileOutput,
+    override_rom_id: str | None = None,
+    complete: set[str] | None = None,
+) -> tuple[ScannedRom | None, list[CandidateDecision]]:
+    rejected: list[tuple[ScannedRom, list[str]]] = []
     allowed: list[ScannedRom] = []
     for rom in candidates:
         ok, reasons = _allowed(rom, output)
         if ok:
             allowed.append(rom)
         else:
-            decisions.append(CandidateDecision(rom_id=rom.id, source_path=rom.source_path, kept=False, reasons=reasons))
+            rejected.append((rom, reasons))
     if not allowed:
-        return None, decisions
+        return None, [CandidateDecision(rom_id=rom.id, source_path=rom.source_path, kept=False, reasons=reasons) for rom, reasons in rejected]
     override = next((rom for rom in candidates if rom.id == override_rom_id), None) if override_rom_id else None
-    winner = override if override else sorted(allowed, key=lambda rom: _score(rom, output))[0]
+    winner = override if override else sorted(allowed, key=lambda rom: _score(rom, output, complete))[0]
+    # Los demás archivos del juego ganador se conservan aunque un filtro del
+    # perfil los rechazara: sin su .cue o sus pistas, el ganador no sirve.
+    siblings = {rom.id for rom in game_siblings(winner, candidates)}
+    sibling_reason = f"Archivo del juego elegido: {winner.dat_game.name}" if winner.dat_game else "Archivo del juego elegido"
+
+    decisions: list[CandidateDecision] = []
+    for rom, reasons in rejected:
+        kept = rom.id in siblings
+        decisions.append(CandidateDecision(rom_id=rom.id, source_path=rom.source_path, kept=kept, reasons=[sibling_reason] if kept else reasons))
     for rom in allowed:
-        kept = rom.id == winner.id
-        if override and kept:
-            reasons = ["Selected by manual override", *explain_score(rom, output)]
-        elif kept:
-            reasons = ["Selected as best candidate", *explain_score(rom, output)]
+        if rom.id == winner.id:
+            reasons = ["Selected by manual override" if override else "Selected as best candidate", *explain_score(rom, output)]
+        elif rom.id in siblings:
+            reasons = [sibling_reason]
         else:
             reasons = [*_loss_reasons(rom, winner, output), *explain_score(rom, output)]
-        decisions.append(CandidateDecision(rom_id=rom.id, source_path=rom.source_path, kept=kept, reasons=reasons))
+        decisions.append(CandidateDecision(rom_id=rom.id, source_path=rom.source_path, kept=rom.id == winner.id or rom.id in siblings, reasons=reasons))
     return winner, decisions
 
 
 def _groups_for_output(scan: ScanResult, output: ProfileOutput) -> dict[str, list[ScannedRom]]:
     if platform_spec(scan.platform).kind == "arcade":
         return _arcade_groups_for_output(scan, output)
-    title_to_parent_keys: dict[str, set[str]] = defaultdict(set)
+    title_to_parent_keys: dict[tuple[str, str], set[str]] = defaultdict(set)
     for rom in scan.roms:
-        title_to_parent_keys[rom.metadata.title].add(rom.dat_game.group_key if rom.dat_game and rom.dat_game.cloneof else rom.metadata.title)
+        title_to_parent_keys[_title_and_part(rom)].add(rom.dat_game.group_key if rom.dat_game and rom.dat_game.cloneof else rom.metadata.title)
 
     groups: dict[str, list[ScannedRom]] = defaultdict(list)
     for rom in scan.roms:
@@ -291,12 +356,24 @@ def _arcade_groups_for_output(scan: ScanResult, output: ProfileOutput) -> dict[s
     return groups
 
 
-def _selection_group_key(rom: ScannedRom, title_to_parent_keys: dict[str, set[str]]) -> str:
-    if len(title_to_parent_keys.get(rom.metadata.title, set())) > 1:
-        return rom.metadata.title
-    if rom.dat_game and rom.dat_game.cloneof:
-        return rom.dat_game.group_key
-    return rom.metadata.title
+def _title_and_part(rom: ScannedRom) -> tuple[str, str]:
+    return rom.metadata.title, rom.metadata.part or ""
+
+
+def _selection_group_key(rom: ScannedRom, title_to_parent_keys: dict[tuple[str, str], set[str]]) -> str:
+    """Grupo del que el 1G1R conserva una variante.
+
+    Cada soporte va a su propio grupo: los discos de un mismo juego no son
+    variantes alternativas entre las que elegir, sino piezas que hacen falta
+    todas. Sin esto, de un juego de tres discos solo sobrevivía el primero.
+    """
+    if len(title_to_parent_keys.get(_title_and_part(rom), set())) > 1:
+        base = rom.metadata.title
+    elif rom.dat_game and rom.dat_game.cloneof:
+        base = rom.dat_game.group_key
+    else:
+        base = rom.metadata.title
+    return with_part(base, rom.metadata.part)
 
 
 def build_manifest(
@@ -320,6 +397,7 @@ def build_manifest(
     selected_buckets: list[OutputBucket] = []
     overrides = overrides or {}
     layout = profile.export_layout
+    complete = complete_variants(scan)
     for output in profile.outputs:
         if output.bucket not in outputs:
             continue
@@ -327,12 +405,12 @@ def build_manifest(
         groups = _groups_for_output(scan, output)
         for group_key, candidates in groups.items():
             override_rom_id = overrides.get(output.bucket.value, {}).get(group_key)
-            winner, decisions = select_best(candidates, output, override_rom_id=override_rom_id)
+            winner, decisions = select_best(candidates, output, override_rom_id=override_rom_id, complete=complete)
             manifest.discarded.extend(decisions)
             if not winner:
                 if output.bucket == OutputBucket.RA and output.require_ra and profile.auto_patch_ra and action != ActionMode.DELETE:
                     base_output = output.model_copy(update={"require_ra": False})
-                    base_winner, base_decisions = select_best(candidates, base_output, override_rom_id=override_rom_id)
+                    base_winner, base_decisions = select_best(candidates, base_output, override_rom_id=override_rom_id, complete=complete)
                     manifest.discarded.extend(base_decisions)
                     if base_winner:
                         patch_candidates = sorted(find_ra_patch_candidates(scan.platform, base_winner.metadata.title, cache=ra_cache), key=lambda candidate: _patch_candidate_score(candidate, output))
@@ -363,41 +441,50 @@ def build_manifest(
                                 )
                             )
                 continue
-            winner_containers.add(winner.container_path)
+            # Un juego del DAT puede ser varios archivos (.cue + sus .bin): se
+            # copian todos, no solo el que mejor puntuó.
+            siblings = game_siblings(winner, candidates)
+            for rom in (winner, *siblings):
+                winner_containers.add(rom.container_path)
             if action == ActionMode.DELETE:
                 continue
-            if layout == ExportLayout.ORGANIZED and output.bucket == OutputBucket.RA and winner.container_path in copied_main_paths:
-                continue
-            key = (output.bucket, winner.container_path)
-            if key in selected_paths:
-                continue
-            selected_paths.add(key)
-            if output.bucket == OutputBucket.MAIN:
-                copied_main_paths.add(winner.container_path)
-            destination = _destination_path(output_dir, winner, output, action, layout)
-            explanation = ["Selected by manual override"] if override_rom_id == winner.id else ["Selected as best candidate"]
-            if layout == ExportLayout.ORGANIZED:
-                explanation.append(f"Organized export folder: {_destination_folder(winner, output, layout)}")
-            if output.require_ra:
-                explanation.append("RetroAchievements output requires a matching RA hash")
-            if winner.ra_patch_url or "rapatches" in {label.lower() for label in winner.ra_labels}:
-                explanation.append(f"RetroAchievements patch metadata: {winner.ra_patch_url or 'rapatches'}")
-            if winner.dat_game:
-                explanation.append(f"DAT match: {winner.dat_game.name}")
-            explanation.extend(explain_score(winner, output))
-            manifest.entries.append(
-                ManifestEntry(
-                    bucket=output.bucket,
-                    action=action,
-                    source_path=winner.container_path,
-                    source_md5=winner.hashes.md5 if winner.inner_path is None else None,
-                    destination_path=destination,
-                    rom_id=winner.id,
-                    dat_name=winner.dat_game.name if winner.dat_game else None,
-                    ra_game_id=winner.ra_game_id,
-                    explanation=explanation,
+            for rom in (winner, *siblings):
+                if layout == ExportLayout.ORGANIZED and output.bucket == OutputBucket.RA and rom.container_path in copied_main_paths:
+                    continue
+                key = (output.bucket, rom.container_path)
+                if key in selected_paths:
+                    continue
+                selected_paths.add(key)
+                if output.bucket == OutputBucket.MAIN:
+                    copied_main_paths.add(rom.container_path)
+                destination = _destination_path(output_dir, rom, output, action, layout)
+                if rom.id == winner.id:
+                    explanation = ["Selected by manual override"] if override_rom_id == winner.id else ["Selected as best candidate"]
+                else:
+                    explanation = [f"Archivo del juego elegido: {winner.dat_game.name}" if winner.dat_game else "Archivo del juego elegido"]
+                if layout == ExportLayout.ORGANIZED:
+                    explanation.append(f"Organized export folder: {_destination_folder(rom, output, layout)}")
+                if output.require_ra:
+                    explanation.append("RetroAchievements output requires a matching RA hash")
+                if rom.ra_patch_url or "rapatches" in {label.lower() for label in rom.ra_labels}:
+                    explanation.append(f"RetroAchievements patch metadata: {rom.ra_patch_url or 'rapatches'}")
+                if rom.dat_game:
+                    explanation.append(f"DAT match: {rom.dat_game.name}")
+                if rom.id == winner.id:
+                    explanation.extend(explain_score(rom, output))
+                manifest.entries.append(
+                    ManifestEntry(
+                        bucket=output.bucket,
+                        action=action,
+                        source_path=rom.container_path,
+                        source_md5=rom.hashes.md5 if rom.inner_path is None else None,
+                        destination_path=destination,
+                        rom_id=rom.id,
+                        dat_name=rom.dat_game.name if rom.dat_game else None,
+                        ra_game_id=rom.ra_game_id,
+                        explanation=explanation,
+                    )
                 )
-            )
     if action == ActionMode.DELETE and selected_buckets:
         discard_reasons: dict[str, list[str]] = {}
         for decision in manifest.discarded:

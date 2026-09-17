@@ -9,6 +9,8 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .coverage import build_coverage
+from .dat import dat_rom_for_hashes
+from .metadata import strip_part
 from .models import DatCatalog, ScannedRom, ScanResult
 
 
@@ -26,6 +28,7 @@ class VerifyReport(BaseModel):
     unmatched: int
     misnamed: int
     duplicates: int
+    mixed: int = 0
     issues: list[VerifyIssue]
 
     @property
@@ -41,7 +44,9 @@ def _rom_file_name(rom: ScannedRom) -> str:
 
 def _expected_name(rom: ScannedRom) -> str | None:
     if rom.dat_game and rom.dat_game.roms:
-        return Path(rom.dat_game.roms[0].name).name
+        matched = dat_rom_for_hashes(rom.dat_game, rom.hashes)
+        if matched:
+            return Path(matched.name).name
     return None
 
 
@@ -81,6 +86,8 @@ def verify_collection(scan: ScanResult, catalog: DatCatalog) -> VerifyReport:
             names = sorted(Path(container).name for container in containers)
             issues.append(VerifyIssue(status="DUPLICADO", title=names[0], detail=f"MD5 {md5[:12]} repetido en: " + ", ".join(names[:4])))
 
+    mixed = _check_mixed_sets(scan, issues)
+
     return VerifyReport(
         dat_games=summary.dat_games,
         romset_games=summary.romset_games,
@@ -89,8 +96,44 @@ def verify_collection(scan: ScanResult, catalog: DatCatalog) -> VerifyReport:
         unmatched=unmatched,
         misnamed=misnamed,
         duplicates=duplicates,
+        mixed=mixed,
         issues=issues,
     )
+
+
+def _check_mixed_sets(scan: ScanResult, issues: list[VerifyIssue]) -> int:
+    """Juegos cuyos discos vienen de variantes distintas y ninguna está completa.
+
+    Un disco 1 europeo junto a un disco 2 americano no arranca, y el usuario no
+    tiene forma de notarlo: los dos archivos existen y los dos casan con el DAT.
+    """
+    parts_by_title: dict[str, set[str]] = defaultdict(set)
+    parts_by_variant: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for rom in scan.roms:
+        if not rom.metadata.part:
+            continue
+        parts_by_title[rom.metadata.title].add(rom.metadata.part)
+        parts_by_variant[(rom.metadata.title, _variant_of(rom))].add(rom.metadata.part)
+
+    mixed = 0
+    for title, parts in sorted(parts_by_title.items()):
+        variants = {variant: found for (item, variant), found in parts_by_variant.items() if item == title}
+        if len(variants) < 2 or any(found >= parts for found in variants.values()):
+            continue
+        mixed += 1
+        detalle = "; ".join(f"{variant}: {', '.join(sorted(found))}" for variant, found in sorted(variants.items()))
+        issues.append(
+            VerifyIssue(
+                status="SET MIXTO",
+                title=title,
+                detail=f"Los soportes vienen de variantes distintas y ninguna está completa ({detalle}). Mezclarlos suele impedir que el juego arranque.",
+            )
+        )
+    return mixed
+
+
+def _variant_of(rom: ScannedRom) -> str:
+    return strip_part(rom.dat_game.name if rom.dat_game else Path(rom.container_path).stem)
 
 
 VERIFY_METRIC_LABELS = [
@@ -101,9 +144,10 @@ VERIFY_METRIC_LABELS = [
     ("unmatched", "Fuera del DAT"),
     ("misnamed", "Mal nombrados"),
     ("duplicates", "Duplicados"),
+    ("mixed", "Sets mixtos"),
 ]
 
-_STATUS_COLORS = {"FALTA": "#c62828", "SIN DAT": "#8a5a44", "MAL NOMBRADO": "#b8860b", "DUPLICADO": "#276a73"}
+_STATUS_COLORS = {"FALTA": "#c62828", "SIN DAT": "#8a5a44", "MAL NOMBRADO": "#b8860b", "DUPLICADO": "#276a73", "SET MIXTO": "#a03e9e"}
 
 
 def report_verify(report: VerifyReport, path: Path, fmt: str) -> Path:

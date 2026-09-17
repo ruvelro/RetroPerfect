@@ -13,7 +13,7 @@ Funciona en local, con interfaz gráfica y línea de comandos. **No incluye ni e
 ## ¿Qué hace?
 
 - **Escanea** tu colección (archivos sueltos, ZIP y 7z) y la identifica por hash contra un DAT oficial: sabrás qué tienes de verdad, no lo que dicen los nombres de archivo.
-- **Audita** con `verify`: juegos que te faltan, archivos que no pertenecen al set, ROMs mal nombradas y duplicados.
+- **Audita** con `verify`: juegos que te faltan, archivos que no pertenecen al set, ROMs mal nombradas, duplicados y sets mixtos (el disco 1 de una región junto al disco 2 de otra).
 - **Cura** con perfiles 1G1R (*1 Game 1 ROM*): de 5 copias de un juego (Japón, USA, Europa, beta, hack...) conserva solo la que prefieras, con reglas de prioridad por región e idioma explicables — cada decisión viene con su motivo.
 - **RetroAchievements**: marca qué ROMs de tu colección son compatibles con logros, y si una no lo es, puede localizar y aplicar el parche oficial automáticamente.
 - **Aplica el plan con red de seguridad**: verificación MD5 byte a byte de cada archivo copiado o movido, comprobaciones previas de espacio y colisiones, y papelera restaurable en vez de borrados.
@@ -260,7 +260,8 @@ En la interfaz gráfica, la papelera vive al final de la pestaña **Actividad** 
 ## Conceptos en 60 segundos
 
 - **DAT**: catálogo oficial de hashes de un sistema (No-Intro para cartuchos, Redump para discos, MAME/FBNeo para arcade). Es la "verdad" contra la que se verifica todo.
-- **1G1R**: de cada juego, una sola ROM. RetroPerfect agrupa las variantes (por Parent/Clone del DAT o por título) y elige la mejor según tu perfil.
+- **1G1R**: de cada juego, una sola *variante*. RetroPerfect agrupa las variantes (por Parent/Clone del DAT o por título) y elige la mejor según tu perfil.
+- **Juegos de varias piezas**: un juego de Redump son varios archivos (un `.cue` y sus `.bin`) y puede ocupar varios discos. Elegir una variante se lleva **todos** sus archivos y **todos** sus discos; los discos no compiten entre sí. Si a tu región preferida le falta un disco pero otra está completa, se queda la completa: mezclar discos de regiones distintas suele impedir que el juego arranque.
 - **Perfil**: tus reglas — prioridad de regiones (`Spain > Europe > World > USA > Japan`), de idiomas, exclusión de betas/hacks/bad dumps, preferencia por revisiones nuevas... Hay perfiles recomendados listos para usar.
 - **Salidas**: `main` (tu colección 1G1R) y `ra` (variantes compatibles con RetroAchievements). Con el layout *organizado*, la salida se estructura en carpetas `EUR/`, `USA/`, `JPN/`, `Otros/...`.
 - **Manifiesto**: el plan de operaciones (copiar/mover/borrar) que revisas antes de aplicar. Se guarda en `.retroperfect/manifests/`.
@@ -289,7 +290,7 @@ Cada tag `v*` publica automáticamente los paquetes de Windows, macOS y Linux en
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 285 tests
+pytest -q            # 306 tests
 ruff check src tests # lint
 mypy                 # type-checking estricto en verde
 ```
