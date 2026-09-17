@@ -9,10 +9,12 @@ from __future__ import annotations
 import binascii
 import hashlib
 import json
+import re
 import zipfile
 from pathlib import Path
 
 import pytest
+from click.testing import Result
 from rich.console import Console
 from typer import rich_utils
 from typer.testing import CliRunner
@@ -24,7 +26,7 @@ from retroperfect.models import ActionMode, Manifest, ManifestEntry, OutputBucke
 
 runner = CliRunner()
 
-# Ancho fijo de la salida en los tests: ver la fixture `ancho_estable`.
+# Ancho fijo de la salida en los tests: ver la fixture `salida_como_en_ci`.
 ANCHO_SALIDA = 200
 
 
@@ -48,17 +50,32 @@ def entorno(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def ancho_estable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fija el ancho de Rich para que la salida no dependa del terminal.
+def salida_como_en_ci(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fija ancho y color de Rich a lo que usa la CI, que es el caso más duro.
 
-    `COLUMNS` no basta: la consola de la CLI se crea al importar el módulo y la
-    de los errores de uso la construye Typer con su propio `MAX_WIDTH`. Sin
-    fijarlas, Rich parte las frases por donde le cabe y las aserciones sobre la
-    salida pasan en local y fallan en CI, que usa un terminal más estrecho.
+    En local la salida sale sin color y con el ancho del terminal; en CI sale
+    coloreada y más estrecha. Fijarlo aquí evita tests que pasan en un sitio y
+    fallan en el otro. `COLUMNS` no basta: la consola de la CLI se crea al
+    importar el módulo y la de los errores de uso la construye Typer con sus
+    propios `MAX_WIDTH` y `FORCE_TERMINAL`.
     """
     monkeypatch.setenv("COLUMNS", str(ANCHO_SALIDA))
     monkeypatch.setattr(rich_utils, "MAX_WIDTH", ANCHO_SALIDA)
-    monkeypatch.setattr(cli_module, "console", Console(width=ANCHO_SALIDA))
+    monkeypatch.setattr(rich_utils, "FORCE_TERMINAL", True)
+    monkeypatch.setattr(cli_module, "console", Console(width=ANCHO_SALIDA, force_terminal=True))
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _texto(result: Result) -> str:
+    """Salida sin códigos ANSI y con los saltos de línea colapsados.
+
+    Hace falta para afirmar sobre lo que el usuario lee: Rich parte las frases
+    por donde le cabe (`md5 \\nverificado`) y el resaltado de opciones corta los
+    literales por dentro (`--dest` sale como `-` + `-dest` con estilos en medio).
+    """
+    return re.sub(r"\s+", " ", _ANSI.sub("", result.output))
 
 
 @pytest.fixture(autouse=True)
@@ -147,6 +164,20 @@ def _sesiones_papelera(work: Path) -> list[Path]:
     return sorted(item for item in trash.iterdir() if item.is_dir()) if trash.exists() else []
 
 
+# --- Candado de las condiciones de salida ------------------------------------
+
+
+def test_la_salida_se_prueba_en_condiciones_de_ci(entorno: Path) -> None:
+    """Si esto falla, los tests han dejado de reproducir la CI y volverán a pasar
+    en local mientras fallan allí. La CI colorea la salida, y el resaltado de
+    opciones parte los literales por dentro: `--dest` sale como `-` + `-dest`."""
+    result = runner.invoke(app, ["download", "--dat", "no-existe.xml", "--confirm"])
+
+    assert "\x1b[" in result.output, "la salida sale sin color: la fixture de ancho/color no se aplicó"
+    assert "\x1b[" not in _texto(result)
+    assert "--dat" in _texto(result)
+
+
 # --- apply: el comando más destructivo ---------------------------------------
 
 
@@ -174,7 +205,7 @@ def test_apply_con_confirm_copia_y_verifica(entorno: Path) -> None:
     assert result.exit_code == 0, result.output
     assert destino.read_bytes() == payload
     assert origen.exists()  # copy, no move
-    assert "md5 verificado" in result.output
+    assert "md5 verificado" in _texto(result)
     # Queda constancia en el diario del proyecto, no en el del usuario.
     assert list((entorno / ".retroperfect" / "applied").glob("*.json"))
 
@@ -207,7 +238,7 @@ def test_apply_falla_si_falta_el_manifiesto(entorno: Path) -> None:
     result = runner.invoke(app, ["apply", "--manifest", str(entorno / "no-existe.json")])
 
     assert result.exit_code == 2
-    assert "no-existe.json" in result.output
+    assert "no-existe.json" in _texto(result)
 
 
 def test_apply_borrado_mueve_a_la_papelera_del_proyecto(entorno: Path) -> None:
@@ -230,7 +261,7 @@ def test_trash_list_sin_papelera(entorno: Path) -> None:
     result = runner.invoke(app, ["trash-list"])
 
     assert result.exit_code == 0
-    assert "vacía" in result.output
+    assert "vacía" in _texto(result)
 
 
 def test_trash_list_muestra_la_sesion_creada_por_apply(entorno: Path) -> None:
@@ -241,7 +272,7 @@ def test_trash_list_muestra_la_sesion_creada_por_apply(entorno: Path) -> None:
     result = runner.invoke(app, ["trash-list"])
 
     assert result.exit_code == 0
-    assert _sesiones_papelera(entorno)[0].name in result.output
+    assert _sesiones_papelera(entorno)[0].name in _texto(result)
 
 
 def test_trash_restore_devuelve_el_archivo_a_su_ruta_original(entorno: Path) -> None:
@@ -271,7 +302,7 @@ def test_trash_empty_sin_confirm_no_borra_nada(entorno: Path) -> None:
     result = runner.invoke(app, ["trash-empty"])
 
     assert result.exit_code == 1
-    assert "irreversible" in result.output
+    assert "irreversible" in _texto(result)
     assert (_sesiones_papelera(entorno)[0] / "Sobra (Japan).nes").exists()
 
 
@@ -283,7 +314,7 @@ def test_trash_empty_con_confirm_vacia_la_papelera(entorno: Path) -> None:
     result = runner.invoke(app, ["trash-empty", "--confirm"])
 
     assert result.exit_code == 0, result.output
-    assert "1 archivos" in result.output
+    assert "1 archivos" in _texto(result)
     assert _sesiones_papelera(entorno) == []
 
 
@@ -296,7 +327,7 @@ def test_scan_guarda_el_resultado_en_el_estado_del_proyecto(entorno: Path) -> No
     result = runner.invoke(app, ["scan", "--platform", "nes", "--input", str(roms), "--no-annotate-ra"])
 
     assert result.exit_code == 0, result.output
-    assert "Scan Summary" in result.output
+    assert "Scan Summary" in _texto(result)
     latest = entorno / ".retroperfect" / "scans" / "latest.json"
     assert json.loads(latest.read_text(encoding="utf-8"))["roms"]
 
@@ -320,7 +351,7 @@ def test_scan_rechaza_una_plataforma_desconocida(entorno: Path) -> None:
     result = runner.invoke(app, ["scan", "--platform", "gameboy-color-2", "--input", str(roms)])
 
     assert result.exit_code == 2
-    assert "no soportada" in result.output.lower()
+    assert "no soportada" in _texto(result).lower()
 
 
 def test_plan_genera_un_manifiesto_a_partir_del_escaneo(entorno: Path) -> None:
@@ -411,9 +442,9 @@ def test_audit_puntua_la_coleccion_y_lista_los_avisos(entorno: Path) -> None:
     result = runner.invoke(app, ["audit", "--input", str(roms), "--dat", str(dat)])
 
     assert result.exit_code == 0, result.output
-    assert "Nota:" in result.output
-    assert "Auditoría de la colección" in result.output
-    assert "Faltantes" in result.output
+    assert "Nota:" in _texto(result)
+    assert "Auditoría de la colección" in _texto(result)
+    assert "Faltantes" in _texto(result)
 
 
 def test_audit_reutiliza_un_escaneo_guardado_sin_volver_a_escanear(entorno: Path) -> None:
@@ -425,7 +456,7 @@ def test_audit_reutiliza_un_escaneo_guardado_sin_volver_a_escanear(entorno: Path
     result = runner.invoke(app, ["audit", "--scan", ".retroperfect/scans/latest.json", "--dat", str(dat)])
 
     assert result.exit_code == 0, result.output
-    assert "Nota:" in result.output
+    assert "Nota:" in _texto(result)
 
 
 def test_verify_de_una_coleccion_completa_sale_con_cero(entorno: Path) -> None:
@@ -436,7 +467,7 @@ def test_verify_de_una_coleccion_completa_sale_con_cero(entorno: Path) -> None:
     result = runner.invoke(app, ["verify", "--input", str(roms), "--dat", str(dat)])
 
     assert result.exit_code == 0, result.output
-    assert "sin incidencias" in result.output
+    assert "sin incidencias" in _texto(result)
 
 
 def test_verify_con_faltantes_sale_con_codigo_uno(entorno: Path) -> None:
@@ -446,8 +477,8 @@ def test_verify_con_faltantes_sale_con_codigo_uno(entorno: Path) -> None:
     result = runner.invoke(app, ["verify", "--input", str(roms), "--dat", str(dat)])
 
     assert result.exit_code == 1
-    assert "Incidencias" in result.output
-    assert "FALTA" in result.output
+    assert "Incidencias" in _texto(result)
+    assert "FALTA" in _texto(result)
 
 
 def test_verify_en_json_guarda_el_informe_y_sigue_fallando(entorno: Path) -> None:
@@ -476,8 +507,8 @@ def test_validate_sin_argumentos_pide_origen_y_dat(entorno: Path) -> None:
     result = runner.invoke(app, ["validate"])
 
     assert result.exit_code == 0
-    assert "origen" in result.output
-    assert "DAT" in result.output
+    assert "origen" in _texto(result)
+    assert "DAT" in _texto(result)
 
 
 def test_validate_con_origen_y_dat_correctos_no_reporta_nada(entorno: Path) -> None:
@@ -488,15 +519,15 @@ def test_validate_con_origen_y_dat_correctos_no_reporta_nada(entorno: Path) -> N
     result = runner.invoke(app, ["validate", "--input", str(roms), "--dat", str(dat), "--output-dir", str(entorno / "out")])
 
     assert result.exit_code == 0, result.output
-    assert "ready" in result.output
+    assert "ready" in _texto(result)
 
 
 def test_validate_detecta_rutas_inexistentes(entorno: Path) -> None:
     result = runner.invoke(app, ["validate", "--input", str(entorno / "no-hay"), "--dat", str(entorno / "no-dat.xml")])
 
     assert result.exit_code == 0
-    assert "El origen seleccionado no existe" in result.output
-    assert "El DAT seleccionado no existe" in result.output
+    assert "El origen seleccionado no existe" in _texto(result)
+    assert "El DAT seleccionado no existe" in _texto(result)
 
 
 # --- DAT: import / list / compare --------------------------------------------
@@ -538,7 +569,7 @@ def test_dat_list_sin_dats_instalados_no_falla(entorno: Path) -> None:
     result = runner.invoke(app, ["dat-list"])
 
     assert result.exit_code == 0
-    assert "Installed DATs" in result.output
+    assert "Installed DATs" in _texto(result)
 
 
 def test_dat_compare_resume_los_juegos_comunes_y_exclusivos(entorno: Path) -> None:
@@ -548,16 +579,16 @@ def test_dat_compare_resume_los_juegos_comunes_y_exclusivos(entorno: Path) -> No
     result = runner.invoke(app, ["dat-compare", str(izquierda), str(derecha)])
 
     assert result.exit_code == 0, result.output
-    assert "Common games" in result.output
-    assert "Left-only games" in result.output
+    assert "Common games" in _texto(result)
+    assert "Left-only games" in _texto(result)
 
 
 def test_dat_download_sin_argumentos_solo_lista_las_fuentes_online(entorno: Path) -> None:
     result = runner.invoke(app, ["dat-download", "--platform", "nes"])
 
     assert result.exit_code == 0, result.output
-    assert "Online DAT Sources" in result.output
-    assert "libretro-nes-nointro" in result.output
+    assert "Online DAT Sources" in _texto(result)
+    assert "libretro-nes-nointro" in _texto(result)
 
 
 def test_dat_download_con_una_fuente_desconocida_falla(entorno: Path) -> None:
@@ -570,7 +601,7 @@ def test_dat_update_sin_dats_de_fuentes_directas_no_hace_nada(entorno: Path) -> 
     result = runner.invoke(app, ["dat-update"])
 
     assert result.exit_code == 0, result.output
-    assert "No hay DATs instalados" in result.output
+    assert "No hay DATs instalados" in _texto(result)
 
 
 def test_dat_compare_falla_si_un_dat_no_existe(entorno: Path) -> None:
@@ -588,8 +619,8 @@ def test_rom_sources_vacio_sugiere_como_anadir_una(entorno: Path) -> None:
     result = runner.invoke(app, ["rom-sources"])
 
     assert result.exit_code == 0
-    assert "rom-source-add" in result.output
-    assert "archive_org" in result.output
+    assert "rom-source-add" in _texto(result)
+    assert "archive_org" in _texto(result)
 
 
 def test_rom_source_add_list_toggle_y_remove(entorno: Path) -> None:
@@ -622,7 +653,7 @@ def test_rom_source_add_rechaza_un_tipo_desconocido(entorno: Path) -> None:
     result = runner.invoke(app, ["rom-source-add", "--id", "x", "--label", "X", "--kind", "ftp", "--location", "/tmp"])
 
     assert result.exit_code == 2
-    assert "no soportado" in result.output.lower()
+    assert "no soportado" in _texto(result).lower()
     assert rom_sources.list_rom_sources() == []
 
 
@@ -643,7 +674,7 @@ def test_rom_source_remove_de_un_id_inexistente_sale_con_codigo_uno(entorno: Pat
     result = runner.invoke(app, ["rom-source-remove", "fantasma"])
 
     assert result.exit_code == 1
-    assert "No existe" in result.output
+    assert "No existe" in _texto(result)
 
 
 # --- download ----------------------------------------------------------------
@@ -655,7 +686,7 @@ def test_download_sin_fuentes_configuradas_sale_con_error(entorno: Path) -> None
     result = runner.invoke(app, ["download", "--dat", str(dat)])
 
     assert result.exit_code == 1
-    assert "rom-source-add" in result.output
+    assert "rom-source-add" in _texto(result)
 
 
 def test_download_sin_confirm_solo_simula(entorno: Path) -> None:
@@ -668,8 +699,8 @@ def test_download_sin_confirm_solo_simula(entorno: Path) -> None:
     result = runner.invoke(app, ["download", "--dat", str(dat), "--dest", str(destino)])
 
     assert result.exit_code == 0, result.output
-    assert "Simulación" in result.output
-    assert "Falta" in result.output
+    assert "Simulación" in _texto(result)
+    assert "Falta" in _texto(result)
     assert not destino.exists()
 
 
@@ -684,7 +715,7 @@ def test_download_con_confirm_verifica_e_instala(entorno: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert (destino / "Falta (Europe).nes").read_bytes() == payload
-    assert "Descargados 1" in result.output
+    assert "Descargados 1" in _texto(result)
 
 
 def test_download_con_confirm_pero_sin_dest_es_un_error_de_uso(entorno: Path) -> None:
@@ -696,7 +727,7 @@ def test_download_con_confirm_pero_sin_dest_es_un_error_de_uso(entorno: Path) ->
     result = runner.invoke(app, ["download", "--dat", str(dat), "--confirm"])
 
     assert result.exit_code == 2
-    assert "--dest" in result.output
+    assert "--dest" in _texto(result)
 
 
 def test_download_avisa_cuando_la_unica_fuente_esta_desactivada(entorno: Path) -> None:
@@ -708,7 +739,7 @@ def test_download_avisa_cuando_la_unica_fuente_esta_desactivada(entorno: Path) -
     result = runner.invoke(app, ["download", "--dat", str(dat)])
 
     assert result.exit_code == 1
-    assert "rom-source-toggle" in result.output
+    assert "rom-source-toggle" in _texto(result)
 
 
 def test_download_reporta_una_fuente_rota(entorno: Path) -> None:
@@ -718,7 +749,7 @@ def test_download_reporta_una_fuente_rota(entorno: Path) -> None:
     result = runner.invoke(app, ["download", "--dat", str(dat)])
 
     assert result.exit_code == 1
-    assert "Fuente no disponible" in result.output
+    assert "Fuente no disponible" in _texto(result)
 
 
 # --- torrent -----------------------------------------------------------------
@@ -732,9 +763,9 @@ def test_torrent_queue_en_dry_run_no_toca_el_cliente(entorno: Path) -> None:
     result = runner.invoke(app, ["torrent-queue", "--torrent", str(torrent), "--dat", str(dat), "--dry-run"])
 
     assert result.exit_code == 0, result.output
-    assert "NES Set" in result.output
-    assert "Simulación" in result.output
-    assert "Falta" in result.output
+    assert "NES Set" in _texto(result)
+    assert "Simulación" in _texto(result)
+    assert "Falta" in _texto(result)
 
 
 def test_torrent_collect_copia_al_romset_lo_ya_descargado(entorno: Path) -> None:
@@ -753,7 +784,7 @@ def test_torrent_collect_copia_al_romset_lo_ya_descargado(entorno: Path) -> None
     assert (destino / "Falta (Europe).nes").read_bytes() == payload
     # Se copia, no se mueve: el cliente sigue sembrando desde su carpeta.
     assert (descargas / "Falta (Europe).nes").exists()
-    assert "Instalados 1" in result.output
+    assert "Instalados 1" in _texto(result)
 
 
 def test_torrent_collect_avisa_de_una_descarga_incompleta(entorno: Path) -> None:
@@ -770,7 +801,7 @@ def test_torrent_collect_avisa_de_una_descarga_incompleta(entorno: Path) -> None
 
     assert result.exit_code == 0, result.output
     assert not (destino / "Falta (Europe).nes").exists()
-    assert "Instalados 0" in result.output
+    assert "Instalados 0" in _texto(result)
 
 
 def test_torrent_queue_falla_si_el_torrent_no_existe(entorno: Path) -> None:
@@ -799,7 +830,7 @@ def test_sync_ra_pasa_credenciales_y_resume_lo_cacheado(entorno: Path, monkeypat
 
     assert result.exit_code == 0, result.output
     assert llamadas == [(Platform.SNES, "yo", "secreto")]
-    assert "42" in result.output
+    assert "42" in _texto(result)
 
 
 def test_sync_ra_details_reporta_los_hashes_actualizados(entorno: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -810,7 +841,7 @@ def test_sync_ra_details_reporta_los_hashes_actualizados(entorno: Path, monkeypa
     result = runner.invoke(app, ["sync-ra-details", "--platform", "nes", "--limit", "7"])
 
     assert result.exit_code == 0, result.output
-    assert "7" in result.output
+    assert "7" in _texto(result)
 
 
 def test_sync_ra_rechaza_una_plataforma_desconocida(entorno: Path) -> None:
@@ -851,7 +882,7 @@ def test_la_ayuda_general_registra_todos_los_comandos(entorno: Path) -> None:
 
     assert result.exit_code == 0
     for comando in TODOS_LOS_COMANDOS:
-        assert comando in result.output
+        assert comando in _texto(result)
 
 
 @pytest.mark.parametrize("comando", TODOS_LOS_COMANDOS)
