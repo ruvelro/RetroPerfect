@@ -13,13 +13,19 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from rich.console import Console
+from typer import rich_utils
 from typer.testing import CliRunner
 
+from retroperfect import cli as cli_module
 from retroperfect import dat_sources, downloader, patching, profile, ra, remote_zip, rom_sources
 from retroperfect.cli import app
 from retroperfect.models import ActionMode, Manifest, ManifestEntry, OutputBucket, Platform
 
 runner = CliRunner()
+
+# Ancho fijo de la salida en los tests: ver la fixture `ancho_estable`.
+ANCHO_SALIDA = 200
 
 
 # --- Fixtures y helpers ------------------------------------------------------
@@ -37,10 +43,22 @@ def entorno(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         monkeypatch.setattr(module, "config_dir", lambda: config)
     for module in (rom_sources, ra, dat_sources, patching):
         monkeypatch.setattr(module, "data_dir", lambda: data)
-    # Rich recorta las celdas al ancho del terminal; sin esto las tablas salen truncadas.
-    monkeypatch.setenv("COLUMNS", "200")
     monkeypatch.chdir(work)
     return work
+
+
+@pytest.fixture(autouse=True)
+def ancho_estable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fija el ancho de Rich para que la salida no dependa del terminal.
+
+    `COLUMNS` no basta: la consola de la CLI se crea al importar el módulo y la
+    de los errores de uso la construye Typer con su propio `MAX_WIDTH`. Sin
+    fijarlas, Rich parte las frases por donde le cabe y las aserciones sobre la
+    salida pasan en local y fallan en CI, que usa un terminal más estrecho.
+    """
+    monkeypatch.setenv("COLUMNS", str(ANCHO_SALIDA))
+    monkeypatch.setattr(rich_utils, "MAX_WIDTH", ANCHO_SALIDA)
+    monkeypatch.setattr(cli_module, "console", Console(width=ANCHO_SALIDA))
 
 
 @pytest.fixture(autouse=True)
