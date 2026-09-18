@@ -524,6 +524,102 @@ def _torrent_plan(torrent: Path, dat: Path, platform: str, scan: Path | None, pr
     return plan, info
 
 
+@app.command()
+def fixdat(
+    platform: Annotated[str, typer.Option("--platform")] = "nes",
+    input: Annotated[Path, typer.Option("--input", exists=True, file_okay=True, dir_okay=True, readable=True)] = Path("."),
+    dat: Annotated[Path, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = ...,  # type: ignore[assignment]
+    scan: Annotated[Path | None, typer.Option("--scan", exists=True, file_okay=True, dir_okay=False, readable=True, help="Reutiliza un escaneo guardado en vez de volver a escanear.")] = None,
+    output: Annotated[Path | None, typer.Option("--output", help="Por defecto .retroperfect/reports/fixdat-<plataforma>.dat")] = None,
+    workers: Annotated[int | None, typer.Option("--workers", min=1)] = None,
+) -> None:
+    """Exporta un DAT con solo lo que te falta, para dárselo a otra herramienta."""
+    from .fixdat import build_fixdat, missing_roms
+
+    parsed_platform = _platform(platform)
+    catalog = parse_dat(dat)
+    scan_result = load_scan(scan) if scan else scan_directory(input, parsed_platform, dat_index=DatIndex(catalog), dat_path=dat, hash_cache=project_state_dir() / "scan-cache.sqlite3", workers=workers)
+    faltan = missing_roms(catalog, scan_result)
+    destino = output or Path(f".retroperfect/reports/fixdat-{parsed_platform.value}.dat")
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(build_fixdat(catalog, scan_result, parsed_platform), encoding="utf-8")
+    roms = sum(len(items) for _game, items in faltan)
+    console.print(f"[green]Fixdat guardado en {destino}[/green]: {len(faltan)} juegos, {roms} ROMs que te faltan.")
+    if not faltan:
+        console.print("La colección está completa según este DAT: el fixdat sale vacío.")
+
+
+@app.command()
+def export(
+    platform: Annotated[str, typer.Option("--platform")] = "nes",
+    input: Annotated[Path, typer.Option("--input", exists=True, file_okay=True, dir_okay=True, readable=True)] = Path("."),
+    dat: Annotated[Path | None, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    scan: Annotated[Path | None, typer.Option("--scan", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    manifest: Annotated[Path | None, typer.Option("--manifest", exists=True, file_okay=True, dir_okay=False, readable=True, help="Usa las rutas de destino del plan en vez de las actuales.")] = None,
+    format: Annotated[str, typer.Option("--format", help="lpl (RetroArch) o gamelist (EmulationStation/Batocera).")] = "lpl",
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+    workers: Annotated[int | None, typer.Option("--workers", min=1)] = None,
+) -> None:
+    """Exporta la colección al formato que consume tu frontend."""
+    from .frontends import libretro_system, write_gamelist, write_retroarch_playlist
+
+    if format not in {"lpl", "gamelist"}:
+        raise typer.BadParameter("Formatos: lpl o gamelist.", param_hint="--format")
+    parsed_platform = _platform(platform)
+    catalog = parse_dat(dat) if dat else None
+    scan_result = load_scan(scan) if scan else scan_directory(input, parsed_platform, dat_index=DatIndex(catalog) if catalog else None, dat_path=dat, hash_cache=project_state_dir() / "scan-cache.sqlite3", workers=workers)
+    loaded = load_manifest(manifest) if manifest else None
+
+    if format == "lpl":
+        destino = output or Path(f"{libretro_system(parsed_platform)}.lpl")
+        write_retroarch_playlist(scan_result, destino, loaded)
+    else:
+        destino = output or Path("gamelist.xml")
+        write_gamelist(scan_result, destino, loaded)
+    console.print(f"[green]Exportado a {destino}[/green] ({len(scan_result.roms)} ROMs del escaneo).")
+    if loaded is None:
+        console.print("Sin --manifest se listan las rutas actuales; pásalo para listar las de la colección curada.")
+
+
+@app.command()
+def thumbnails(
+    platform: Annotated[str, typer.Option("--platform")] = "nes",
+    input: Annotated[Path, typer.Option("--input", exists=True, file_okay=True, dir_okay=True, readable=True)] = Path("."),
+    dat: Annotated[Path, typer.Option("--dat", exists=True, file_okay=True, dir_okay=False, readable=True)] = ...,  # type: ignore[assignment]
+    scan: Annotated[Path | None, typer.Option("--scan", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    manifest: Annotated[Path | None, typer.Option("--manifest", exists=True, file_okay=True, dir_okay=False, readable=True, help="Descarga solo las carátulas de lo que el plan conserva.")] = None,
+    dest: Annotated[Path, typer.Option("--dest", help="Carpeta de carátulas.")] = Path("thumbnails"),
+    kinds: Annotated[str, typer.Option("--kinds", help="boxart, snap y/o title, separados por comas.")] = "boxart",
+    limit: Annotated[int | None, typer.Option("--limit")] = None,
+    overwrite: Annotated[bool, typer.Option("--overwrite/--skip-existing")] = False,
+    workers: Annotated[int | None, typer.Option("--workers", min=1)] = None,
+) -> None:
+    """Descarga las carátulas de Libretro emparejadas por el nombre del DAT."""
+    from .thumbnails import KINDS, download_thumbnails, has_thumbnails
+
+    parsed_platform = _platform(platform)
+    elegidos = tuple(item.strip() for item in kinds.split(",") if item.strip())
+    if desconocidos := [item for item in elegidos if item not in KINDS]:
+        raise typer.BadParameter(f"Tipos desconocidos: {', '.join(desconocidos)}. Usa: {', '.join(KINDS)}.", param_hint="--kinds")
+    if not has_thumbnails(parsed_platform):
+        console.print(f"[yellow]Libretro no publica carátulas de {platform_spec(parsed_platform).short_name}.[/yellow]")
+        raise typer.Exit(code=1)
+
+    catalog = parse_dat(dat)
+    scan_result = load_scan(scan) if scan else scan_directory(input, parsed_platform, dat_index=DatIndex(catalog), dat_path=dat, hash_cache=project_state_dir() / "scan-cache.sqlite3", workers=workers)
+    resultados = download_thumbnails(scan_result, dest, manifest=load_manifest(manifest) if manifest else None, kinds=elegidos, limit=limit, overwrite=overwrite)
+
+    conteo: dict[str, int] = {}
+    for resultado in resultados:
+        conteo[resultado.status] = conteo.get(resultado.status, 0) + 1
+    for resultado in resultados:
+        if resultado.status == "error":
+            console.print(f"[red]error[/red] {resultado.title}: {resultado.detail}")
+    resumen = " · ".join(f"{estado}: {total}" for estado, total in sorted(conteo.items()))
+    console.print(f"[green]Carátulas en {dest}[/green] — {resumen}")
+    console.print("Las que Libretro no tiene salen como 'ausente': no se descarga ninguna aproximada.")
+
+
 @app.command("dat-list")
 def dat_list() -> None:
     """Lista los DATs instalados."""

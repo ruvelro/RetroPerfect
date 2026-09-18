@@ -17,6 +17,7 @@ Funciona en local, con interfaz gráfica y línea de comandos. **No incluye ni e
 - **Cura** con perfiles 1G1R (*1 Game 1 ROM*): de 5 copias de un juego (Japón, USA, Europa, beta, hack...) conserva solo la que prefieras, con reglas de prioridad por región e idioma explicables — cada decisión viene con su motivo.
 - **RetroAchievements**: marca qué ROMs de tu colección son compatibles con logros, y si una no lo es, puede localizar y aplicar el parche oficial automáticamente.
 - **Aplica el plan con red de seguridad**: verificación MD5 byte a byte de cada archivo copiado o movido, comprobaciones previas de espacio y colisiones, y papelera restaurable en vez de borrados.
+- **Prepara la colección para jugarla**: exporta la playlist de RetroArch (`.lpl`) o el `gamelist.xml` de EmulationStation/Batocera con el nombre del DAT y el CRC ya verificados, y descarga las carátulas oficiales de Libretro.
 - **Completa lo que falta** desde las fuentes que tú configures (tu NAS, un ítem de archive.org, un índice HTTP): descarga solo los juegos ausentes según el DAT y tu perfil, y verifica cada archivo por hash antes de instalarlo. RetroPerfect no trae ninguna fuente preconfigurada.
 
 ## Seguridad ante todo
@@ -249,6 +250,38 @@ Dos detalles que conviene saber:
 - **No apuntes tu cliente al romset.** `torrent-collect` **copia**, no mueve, precisamente para que el cliente siga sembrando desde su carpeta, y para que en tu colección solo entre lo verificado. Los archivos a medias se detectan por tamaño y los que no cuadran con el DAT no pasan.
 - Un torrent se divide en **piezas** de tamaño fijo, y una pieza puede cruzar dos archivos. Si una ROM que quieres comparte pieza con una que no, bajarás de propina ese trozo del vecino. Poco, pero no exactamente cero.
 
+### Llevarla al emulador
+
+Cuando la colección está curada, el último paso es que tu frontend la vea bien. RetroPerfect escribe directamente lo que consume, con el nombre que dice el DAT y el CRC que ya calculó, en vez de dejar que el frontend la re-escanee con su propia base de datos:
+
+```bash
+# Playlist de RetroArch (los juegos de varios discos se listan por su .m3u)
+retroperfect export --platform ps1 --scan .retroperfect/scans/latest.json \
+  --manifest .retroperfect/manifests/latest.json --format lpl
+
+# gamelist.xml de EmulationStation / Batocera
+retroperfect export --platform ps1 --scan .retroperfect/scans/latest.json \
+  --manifest .retroperfect/manifests/latest.json --format gamelist --output ~/roms/psx/gamelist.xml
+```
+
+El `gamelist.xml` **se fusiona, nunca se sobrescribe**: ahí viven tus favoritos y tus horas jugadas, que RetroPerfect no puede recuperar si los pierde. Sin `--manifest` se listan las rutas actuales; con él, las de la colección curada.
+
+### Carátulas
+
+```bash
+retroperfect thumbnails --platform ps1 --dat psx.dat --scan .retroperfect/scans/latest.json --dest ~/thumbnails
+```
+
+No es scraping: los thumbnails de Libretro están nombrados **exactamente** igual que las entradas de No-Intro y Redump, así que el emparejamiento es por nombre exacto del DAT, sin clave de API, sin cuenta y sin adivinar títulos parecidos. Lo que Libretro no tenga se reporta como `ausente`; nunca se descarga una carátula aproximada. Con `--kinds boxart,snap,title` bajas también capturas y pantallas de título, y con `--manifest` solo las de lo que tu plan conserva.
+
+### Lo que te falta, en un DAT
+
+```bash
+retroperfect fixdat --platform ps1 --dat psx.dat --scan .retroperfect/scans/latest.json
+```
+
+Genera un DAT con **solo lo que te falta** (y de los juegos a medias, solo las ROMs ausentes): es el formato de intercambio del mundillo, para pasárselo a otra herramienta o a quien pueda completarte el set.
+
 ### Papelera
 
 ```bash
@@ -293,7 +326,7 @@ Cada tag `v*` publica automáticamente los paquetes de Windows, macOS y Linux en
 
 ```bash
 pip install -e ".[dev]"
-pytest -q            # 315 tests
+pytest -q            # 339 tests
 ruff check src tests # lint
 mypy                 # type-checking estricto en verde
 ```

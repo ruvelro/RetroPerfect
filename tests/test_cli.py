@@ -459,6 +459,60 @@ def test_audit_reutiliza_un_escaneo_guardado_sin_volver_a_escanear(entorno: Path
     assert "Nota:" in _texto(result)
 
 
+def test_fixdat_exporta_lo_que_falta(entorno: Path) -> None:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload, "Perdido (Europe)": b"FALTA"})
+
+    result = runner.invoke(app, ["fixdat", "--input", str(roms), "--dat", str(dat)])
+
+    assert result.exit_code == 0, result.output
+    generado = (entorno / ".retroperfect" / "reports" / "fixdat-nes.dat").read_text(encoding="utf-8")
+    assert "Perdido (Europe)" in generado
+    assert "Juego (Europe)" not in generado
+
+
+def test_export_lpl_escribe_una_playlist_de_retroarch(entorno: Path) -> None:
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": b"ROM"})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": b"ROM"})
+
+    result = runner.invoke(app, ["export", "--input", str(roms), "--dat", str(dat), "--format", "lpl", "--output", "salida.lpl"])
+
+    assert result.exit_code == 0, result.output
+    datos = json.loads((entorno / "salida.lpl").read_text(encoding="utf-8"))
+    assert datos["items"][0]["label"] == "Juego (Europe)"
+    assert datos["items"][0]["db_name"] == "Nintendo - Nintendo Entertainment System.lpl"
+
+
+def test_export_rechaza_un_formato_desconocido(entorno: Path) -> None:
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": b"ROM"})
+
+    result = runner.invoke(app, ["export", "--input", str(roms), "--format", "launchbox"])
+
+    assert result.exit_code == 2
+    assert "lpl" in _texto(result)
+
+
+def test_thumbnails_avisa_si_libretro_no_publica_esa_plataforma(entorno: Path) -> None:
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": b"ROM"})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": b"ROM"})
+
+    result = runner.invoke(app, ["thumbnails", "--platform", "switch", "--input", str(roms), "--dat", str(dat)])
+
+    assert result.exit_code == 1
+    assert "no publica carátulas" in _texto(result)
+
+
+def test_thumbnails_rechaza_tipos_desconocidos(entorno: Path) -> None:
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": b"ROM"})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": b"ROM"})
+
+    result = runner.invoke(app, ["thumbnails", "--input", str(roms), "--dat", str(dat), "--kinds", "poster"])
+
+    assert result.exit_code == 2
+    assert "boxart" in _texto(result)
+
+
 def test_verify_de_una_coleccion_completa_sale_con_cero(entorno: Path) -> None:
     payload = b"ROM"
     roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
