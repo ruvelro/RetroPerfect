@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "retroperfect"
-version = "0.6.0"
+dynamic = ["version"]
 description = "Curate retro ROM collections with DAT metadata and RetroAchievements-aware profiles."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,6 +21,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Games/Entertainment",
   "Topic :: System :: Archiving",
 ]
@@ -57,6 +58,9 @@ Releases = "https://github.com/ruvelro/RetroPerfect/releases"
 [project.scripts]
 retroperfect = "retroperfect.cli:app"
 
+[tool.hatch.version]
+path = "src/retroperfect/__init__.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/retroperfect"]
 
@@ -89,5 +93,8 @@ mypy_path = "src"
 packages = ["retroperfect"]
 ignore_missing_imports = true
 check_untyped_defs = true
+# Un `type: ignore` que ya no hace falta oculta el siguiente error de verdad en
+# esa línea. Al tipar el contexto de la GUI sobraron 62 de golpe.
+warn_unused_ignores = true
 
 

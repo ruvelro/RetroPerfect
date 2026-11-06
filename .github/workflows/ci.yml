@@ -24,5 +24,7 @@ jobs:
         run: ruff check src tests
       - name: Mypy
         run: mypy
+      # La puerta está por debajo de la cobertura real a propósito: es una red
+      # contra retrocesos, no un número que haya que perseguir en cada PR.
       - name: Tests
-        run: pytest -q
+        run: pytest -q --cov=retroperfect --cov-report=term-missing --cov-fail-under=80

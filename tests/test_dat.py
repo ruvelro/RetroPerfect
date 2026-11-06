@@ -1,7 +1,7 @@
 import zipfile
 from pathlib import Path
 
-from retroperfect.dat import DatIndex, parse_clrmamepro_dat, parse_logiqx_dat
+from retroperfect.dat import DatIndex, parse_clrmamepro_dat, parse_dat, parse_logiqx_dat
 from retroperfect.dat_manager import compare_dats, download_and_import_url, import_dat_file, inspect_dat, suggest_dat_for_source, validate_setup
 
 
@@ -206,3 +206,75 @@ def test_stale_dats_flags_old_direct_downloads(tmp_path: Path, monkeypatch) -> N
     stale = stale_dats(days=7)
     assert len(stale) == 1
     assert stale[0].name == "NES"
+
+
+def test_dos_juegos_con_la_misma_rom_no_se_pisan_en_el_indice(tmp_path: Path) -> None:
+    """Dos entradas del DAT pueden declarar la misma ROM (dumps idénticos de dos
+    regiones, clones de MAME). Guardando un juego por hash ganaba la última del
+    archivo, así que el resultado dependía del orden del DAT."""
+    import hashlib
+
+    data = b"MISMO-CONTENIDO"
+    sha1 = hashlib.sha1(data).hexdigest()
+    md5 = hashlib.md5(data).hexdigest()
+    dat = tmp_path / "dos.xml"
+    dat.write_text(
+        '<?xml version="1.0"?><datafile><header><name>Dos</name></header>'
+        f'<game name="Juego (Europe)"><description>Juego (Europe)</description>'
+        f'<rom name="Juego (Europe).nes" size="{len(data)}" md5="{md5}" sha1="{sha1}"/></game>'
+        f'<game name="Juego (France)"><description>Juego (France)</description>'
+        f'<rom name="Juego (France).nes" size="{len(data)}" md5="{md5}" sha1="{sha1}"/></game>'
+        "</datafile>",
+        encoding="utf-8",
+    )
+    index = DatIndex(parse_dat(dat))
+
+    assert [game.name for game in index.by_sha1[sha1]] == ["Juego (Europe)", "Juego (France)"]
+    assert index.match("00000000", md5, sha1, len(data)).name == "Juego (Europe)", "debe ganar la primera del DAT"
+
+
+def _dat_xml(cuerpo: str, prologo: str = "") -> str:
+    return f'<?xml version="1.0"?>\n{prologo}<datafile><header><name>Prueba</name></header>{cuerpo}</datafile>'
+
+
+def test_el_doctype_normal_de_no_intro_se_acepta(tmp_path: Path) -> None:
+    """Los DAT de DAT-o-MATIC traen el DOCTYPE del DTD de Logiqx."""
+    dat = tmp_path / "nointro.dat"
+    dat.write_text(
+        _dat_xml(
+            '<game name="Juego"><description>Juego</description><rom name="Juego.nes" size="8" crc="aabbccdd"/></game>',
+            prologo='<!DOCTYPE datafile PUBLIC "-//Logiqx//DTD ROM Management Datafile//EN" "http://www.logiqx.com/Dats/datafile.dtd">\n',
+        ),
+        encoding="utf-8",
+    )
+
+    catalog = parse_dat(dat)
+
+    assert catalog.name == "Prueba"
+    assert [game.name for game in catalog.games] == ["Juego"]
+
+
+def test_un_dat_con_entidades_propias_se_rechaza(tmp_path: Path) -> None:
+    """Un XML diminuto con entidades anidadas se expande hasta agotar la
+    memoria, y los DAT se descargan de espejos públicos."""
+    import pytest
+
+    dat = tmp_path / "bomba.dat"
+    dat.write_text(
+        '<?xml version="1.0"?>\n<!DOCTYPE datafile [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;">]>\n'
+        "<datafile><header><name>&b;</name></header></datafile>",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="entidades XML propias"):
+        parse_dat(dat)
+
+
+def test_los_juegos_salen_en_el_orden_del_archivo(tmp_path: Path) -> None:
+    dat = tmp_path / "orden.dat"
+    dat.write_text(
+        _dat_xml("".join(f'<game name="Juego {i}"><description>Juego {i}</description></game>' for i in range(5))),
+        encoding="utf-8",
+    )
+
+    assert [game.name for game in parse_dat(dat).games] == [f"Juego {i}" for i in range(5)]

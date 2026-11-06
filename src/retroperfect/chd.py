@@ -15,7 +15,7 @@ from .disc import RAW_SYNC, SECTOR_USER_SIZE, DiscError, Iso9660Image
 try:
     import chdimage
 except ImportError:  # plataforma sin wheel de chdimage: se degrada con aviso
-    chdimage = None  # type: ignore[assignment]
+    chdimage = None
 
 logger = logging.getLogger(__name__)
 

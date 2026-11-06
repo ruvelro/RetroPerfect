@@ -7,6 +7,7 @@ con el motivo, que es más útil que borrarlo a ciegas.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import time
 from collections.abc import Callable
@@ -15,7 +16,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from .dat import DatIndex
-from .download_plan import DownloadCandidate, DownloadPlan, group_key
+from .download_plan import DownloadCandidate, DownloadPlan, group_key, human_size
 from .http import session
 from .models import Platform
 from .paths import project_state_dir
@@ -95,9 +96,17 @@ def run_download_plan(
     cancelled: CancelCheck | None = None,
     state_base: Path | None = None,
 ) -> DownloadReport:
-    """Descarga cada candidato del plan, lo verifica contra el DAT y lo instala en destination."""
+    """Descarga cada candidato del plan, lo verifica contra el DAT y lo instala en destination.
+
+    Lanza RuntimeError si no cabe: `apply` comprueba el espacio antes de copiar
+    y descargar no tenía por qué ser distinto. Quedarse sin disco a mitad deja
+    archivos truncados en el área de trabajo y un romset incompleto.
+    """
     destination.mkdir(parents=True, exist_ok=True)
     staging = staging_dir(state_base)
+    falta_espacio = _space_shortfall(plan, destination, staging)
+    if falta_espacio:
+        raise RuntimeError(falta_espacio)
     report = DownloadReport()
     total = len(plan.candidates)
 
@@ -128,6 +137,31 @@ def run_download_plan(
     if progress:
         progress({"phase": "done", "current": total, "total": total, "title": "", "file": ""})
     return report
+
+
+def _space_shortfall(plan: DownloadPlan, destination: Path, staging: Path) -> str | None:
+    """Mensaje si lo planificado no cabe, o None si cabe.
+
+    Lo descargado pasa por el área de trabajo antes de instalarse, así que si
+    está en la misma unidad que el destino hace falta sitio para las dos
+    copias. Los candidatos sin tamaño conocido no suman, y por eso el mensaje
+    lo dice: la cuenta es un mínimo, no una garantía.
+    """
+    needed = plan.total_bytes
+    if not needed:
+        return None
+    try:
+        misma_unidad = os.stat(staging).st_dev == os.stat(destination).st_dev
+        free = shutil.disk_usage(destination).free
+    except OSError:
+        return None
+    if misma_unidad:
+        needed *= 2
+    if needed <= free:
+        return None
+    desconocidos = f" (y {plan.unknown_size_count} archivo(s) de tamaño desconocido, que no están contados)" if plan.unknown_size_count else ""
+    paso = " contando la copia intermedia en el área de trabajo, que está en la misma unidad" if misma_unidad else ""
+    return f"No hay espacio en {destination}: hacen falta {human_size(needed)}{paso} y quedan {human_size(free)} libres{desconocidos}."
 
 
 def collect_downloads(
@@ -186,6 +220,14 @@ def collect_downloads(
     return report
 
 
+def _inside(root: Path, path: Path) -> bool:
+    """True si `path` cae dentro de `root` una vez resueltos los `..` y los enlaces."""
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except OSError:
+        return False
+
+
 def _locate_download(source_dir: Path, candidate: DownloadCandidate) -> Path | None:
     """Busca el archivo en la carpeta del cliente, con o sin la carpeta del torrent.
 
@@ -197,7 +239,10 @@ def _locate_download(source_dir: Path, candidate: DownloadCandidate) -> Path | N
         candidates.append(source_dir / candidate.inner_path)
     candidates.append(source_dir / candidate.file_name)
     for path in candidates:
-        if path.is_file():
+        # `inner_path` viene de la lista de archivos del .torrent, así que un
+        # `..` apuntaría fuera de la carpeta de descargas: se busca dentro o no
+        # se busca. (El DAT lo rechazaría igual, pero no es motivo para leerlo.)
+        if path.is_file() and _inside(source_dir, path):
             return path
     # Algunos clientes guardan todo plano, o dentro de una carpeta con otro nombre.
     matches = [path for path in source_dir.rglob(candidate.file_name) if path.is_file()]

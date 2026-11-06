@@ -15,6 +15,7 @@ from .gui_state import AppState, _current_platform, _log_activity, _online_dat_r
 from .gui_tabs import activity, dats, decisions, download, plan, profile, scan, setup, summary, verify
 from .gui_tabs import platform as platform_tab_module
 from .gui_widgets import GLOBAL_CSS, _install_local_reconnect_guard
+from .i18n import _, available_languages, set_language
 from .models import Platform
 from .platforms import platform_options, platform_spec
 from .ra import ra_cache_count
@@ -23,6 +24,8 @@ __all__ = ["AppState", "build_ui", "reset_state", "run", "state"]
 
 
 def build_ui() -> None:
+    # Una pestaña nueva tiene que abrirse en el idioma ya elegido.
+    set_language(state.language)
     _install_local_reconnect_guard()
     ui.colors(primary="#276a73", secondary="#8a5a44", accent="#46784f")
     dark_mode = ui.dark_mode(False)
@@ -31,19 +34,19 @@ def build_ui() -> None:
 
     with ui.header().classes("rp-header items-center bg-primary text-white px-4 py-2"):
         with ui.column().classes("gap-0 min-w-64"):
-            ui.label("RetroPerfect").classes("text-xl font-semibold")
+            ui.label(_("RetroPerfect")).classes("text-xl font-semibold")
             header_subtitle = ui.label().classes("text-sm opacity-80")
         with ui.row().classes("items-center gap-2 grow justify-center"):
             header_platform_icon_box = ui.element("div").classes("w-9 h-9 flex items-center justify-center")
-            ctx.platform_select = ui.select(platform_options(), value=_current_platform().value, label="Plataforma").props("outlined dense dark").classes("min-w-80")
+            ctx.platform_select = ui.select(platform_options(), value=_current_platform().value, label=_("Plataforma")).props("outlined dense dark").classes("min-w-80")
         with ui.row().classes("items-center gap-2"):
-            header_source_badge = ui.badge("Origen", color="grey")
-            header_dat_badge = ui.badge("DAT", color="grey")
-            header_ra_badge = ui.badge("RA", color="grey")
-            header_plan_badge = ui.badge("Plan", color="grey")
-            header_output_badge = ui.badge("Salida", color="grey")
-            ui.badge("Local", color="secondary")
-            theme_button = ui.button("Oscuro", icon="dark_mode").props("dense unelevated color=white text-color=primary")
+            header_source_badge = ui.badge(_("Origen"), color="grey")
+            header_dat_badge = ui.badge(_("DAT"), color="grey")
+            header_ra_badge = ui.badge(_("RA"), color="grey")
+            header_plan_badge = ui.badge(_("Plan"), color="grey")
+            header_output_badge = ui.badge(_("Salida"), color="grey")
+            ui.badge(_("Local"), color="secondary")
+            theme_button = ui.button(_("Oscuro"), icon="dark_mode").props("dense unelevated color=white text-color=primary")
 
             def toggle_theme() -> None:
                 enabled = not bool(state.dark_mode)
@@ -55,19 +58,35 @@ def build_ui() -> None:
 
             theme_button.on_click(toggle_theme)
 
+            # La interfaz se construye una sola vez por página, así que cambiar
+            # de idioma recarga: traducir en caliente cada widget ya creado
+            # sería mucho más código para el mismo resultado.
+            def switch_language(code: str) -> None:
+                if code == state.language:
+                    return
+                state.language = set_language(code)
+                ui.navigate.reload()
+
+            ui.select(
+                available_languages(),
+                value=state.language,
+                label=_("Idioma"),
+                on_change=lambda event: switch_language(event.value),
+            ).props("outlined dense dark").classes("w-36")
+
             quit_dialog = ui.dialog()
             with quit_dialog, ui.card().classes("w-[460px] max-w-[95vw]"):
-                ui.label("Cerrar RetroPerfect").classes("text-lg font-semibold")
+                ui.label(_("Cerrar RetroPerfect")).classes("text-lg font-semibold")
                 quit_message = ui.label().classes("text-sm text-gray-700")
                 with ui.row().classes("justify-end w-full"):
-                    ui.button("Cancelar", icon="close", on_click=quit_dialog.close).props("flat")
+                    ui.button(_("Cancelar"), icon="close", on_click=quit_dialog.close).props("flat")
 
                     async def confirm_quit() -> None:
                         quit_dialog.close()
                         _log_activity("Cierre solicitado desde la interfaz", "INFO")
                         await request_shutdown()
 
-                    ui.button("Cerrar", icon="power_settings_new", on_click=confirm_quit).props("color=negative")
+                    ui.button(_("Cerrar"), icon="power_settings_new", on_click=confirm_quit).props("color=negative")
 
             def quit_click() -> None:
                 reason = busy_reason()
@@ -78,21 +97,21 @@ def build_ui() -> None:
                 )
                 quit_dialog.open()
 
-            ui.button("Salir", icon="power_settings_new", on_click=quit_click).props("dense unelevated color=negative")
+            ui.button(_("Salir"), icon="power_settings_new", on_click=quit_click).props("dense unelevated color=negative")
 
     with ui.column().classes(_page_class()):
         with ui.tabs().classes("w-full") as tabs:
-            ctx.platform_tab = ui.tab("Plataforma", icon="category")
-            ctx.setup_tab = ui.tab("Setup", icon="settings")
-            ctx.dats_tab = ui.tab("Biblioteca DAT", icon="inventory_2")
-            ctx.profile_tab = ui.tab("Perfil", icon="tune")
-            ctx.scan_tab = ui.tab("Escaneo", icon="search")
-            ctx.verify_tab = ui.tab("Verificar", icon="verified")
-            ctx.download_tab = ui.tab("Descargar", icon="cloud_download")
-            ctx.decisions_tab = ui.tab("Decisiones", icon="fact_check")
-            ctx.plan_tab = ui.tab("Plan", icon="rule")
-            ctx.summary_tab = ui.tab("Resumen", icon="dashboard")
-            ctx.activity_tab = ui.tab("Actividad", icon="history")
+            ctx.platform_tab = ui.tab(_("Plataforma"), icon="category")
+            ctx.setup_tab = ui.tab(_("Setup"), icon="settings")
+            ctx.dats_tab = ui.tab(_("Biblioteca DAT"), icon="inventory_2")
+            ctx.profile_tab = ui.tab(_("Perfil"), icon="tune")
+            ctx.scan_tab = ui.tab(_("Escaneo"), icon="search")
+            ctx.verify_tab = ui.tab(_("Verificar"), icon="verified")
+            ctx.download_tab = ui.tab(_("Descargar"), icon="cloud_download")
+            ctx.decisions_tab = ui.tab(_("Decisiones"), icon="fact_check")
+            ctx.plan_tab = ui.tab(_("Plan"), icon="rule")
+            ctx.summary_tab = ui.tab(_("Resumen"), icon="dashboard")
+            ctx.activity_tab = ui.tab(_("Actividad"), icon="history")
 
         def has_control_value(name: str) -> bool:
             control = ctx.header_refs.get(name)
@@ -191,7 +210,7 @@ def build_ui() -> None:
             ctx.refresh_setup_platform_summary()
             ctx.refresh_needed_table()
             ctx.ra_cache_status.text = _ra_status_label(new_platform)
-            ctx.scan_status.text = "La plataforma ha cambiado. Valida el setup y escanea de nuevo."
+            ctx.scan_status.text = _("La plataforma ha cambiado. Valida el setup y escanea de nuevo.")
             ctx.refresh_coverage()
             ctx.refresh_decisions()
             update_tab_access()
@@ -201,13 +220,36 @@ def build_ui() -> None:
         ctx.platform_select.on_value_change(lambda event: switch_platform(event.value))
 
 
-def run(host: str = "127.0.0.1", port: int = 8080, show: bool = False, exit_on_idle: bool = False) -> None:
+# Direcciones que solo alcanza esta máquina. Cualquier otra publica la interfaz
+# en la red.
+LOOPBACK_HOSTS = {"", "127.0.0.1", "::1", "localhost", "127.0.0.0/8"}
+
+
+def assert_host_is_safe(host: str, allow_remote: bool = False) -> None:
+    """Comprueba que la interfaz no se publique en la red sin querer.
+
+    No hay usuarios ni contraseñas: quien alcance el puerto puede explorar todo
+    el disco con el selector de archivos, planificar y borrar. Eso está bien
+    mientras solo escuche en loopback, pero `--host 0.0.0.0` lo dejaba al
+    alcance de toda la red local sin un solo aviso.
+    """
+    if host in LOOPBACK_HOSTS or allow_remote:
+        return
+    raise RuntimeError(
+        f"Escuchar en {host} publica la interfaz en la red, y RetroPerfect no pide ninguna credencial: "
+        "quien llegue al puerto puede explorar tus carpetas y borrar archivos. "
+        "Si es lo que quieres (una red en la que confías, un contenedor), repite con --allow-remote."
+    )
+
+
+def run(host: str = "127.0.0.1", port: int = 8080, show: bool = False, exit_on_idle: bool = False, allow_remote: bool = False) -> None:
     """Arranca la interfaz local.
 
     `show` abre el navegador automáticamente y `exit_on_idle` cierra la aplicación
     cuando no queda ningún navegador conectado: los usa la app empaquetada, que no
     tiene terminal ni icono en el Dock donde ver la URL o terminar el proceso.
     """
+    assert_host_is_safe(host, allow_remote)
     app.config.socket_io_js_transports = ["polling", "websocket"]
     if exit_on_idle:
         install_idle_shutdown()
@@ -215,7 +257,7 @@ def run(host: str = "127.0.0.1", port: int = 8080, show: bool = False, exit_on_i
         build_ui,
         host=host,
         port=port,
-        title="RetroPerfect",
+        title=_("RetroPerfect"),
         reload=False,
         show=show,
         reconnect_timeout=30.0,

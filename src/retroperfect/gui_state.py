@@ -11,6 +11,7 @@ from typing import Any
 from .coverage import CoverageSummary
 from .dat_sources import list_dat_sources
 from .gui_rows import _decision_detail, _flag_regions, _ra_icon, _rom_summary_key
+from .i18n import current_language
 from .models import ActionMode, DatCatalog, Manifest, OutputBucket, Platform, ProfileOutput, ScanResult, SelectionProfile
 from .profile import DEFAULT_PROFILE, list_recommended_profiles
 from .rules import build_manifest, explain_score
@@ -32,7 +33,9 @@ class AppState:
     scan_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "path": "", "roms": 0, "matched": 0, "phase": "idle"})
     ra_details_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "updated": 0, "running": False})
     download_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "title": "", "phase": "idle"})
+    apply_progress: dict[str, Any] = field(default_factory=lambda: {"current": 0, "total": 0, "path": "", "phase": "idle"})
     dark_mode: bool = False
+    language: str = field(default_factory=current_language)
     activity: list[dict[str, str]] = field(default_factory=list)
     # Operaciones largas en curso; impiden el apagado automático por inactividad.
     busy_operations: dict[str, int] = field(default_factory=dict)
@@ -112,7 +115,7 @@ def _profile_comparison_rows(scan, output_dir: str | None) -> list[dict[str, str
                 [output.bucket for output in profile.outputs],
                 output_dir=Path(output_dir) if output_dir else None,
                 action=ActionMode.COPY,
-                overrides=state.overrides,  # type: ignore[arg-type]
+                overrides=state.overrides,
             )
         except Exception as exc:
             rows.append({"profile": name, "main": 0, "ra": 0, "total": 0, "drops": 0, "note": f"Error: {exc}"})
@@ -142,8 +145,8 @@ def _group_rows(scan) -> list[dict[str, str | int]]:
     rows = []
     overrides = state.overrides
     for key, roms in sorted(grouped.items(), key=lambda item: item[0].lower()):
-        main_id = overrides.get("main", {}).get(key)  # type: ignore[union-attr]
-        ra_id = overrides.get("ra", {}).get(key)  # type: ignore[union-attr]
+        main_id = overrides.get("main", {}).get(key)
+        ra_id = overrides.get("ra", {}).get(key)
         main_rom = next((rom for rom in roms if rom.id == main_id), None)
         ra_rom = next((rom for rom in roms if rom.id == ra_id), None)
         rows.append(
@@ -165,8 +168,8 @@ def _variant_rows(scan, group_key: str, profile: SelectionProfile) -> list[dict[
         return []
     roms = [rom for rom in scan.roms if _rom_summary_key(rom) == group_key]
     main_output = next((output for output in profile.outputs if output.bucket == OutputBucket.MAIN), ProfileOutput(bucket=OutputBucket.MAIN))
-    main_override = state.overrides.get("main", {}).get(group_key)  # type: ignore[union-attr]
-    ra_override = state.overrides.get("ra", {}).get(group_key)  # type: ignore[union-attr]
+    main_override = state.overrides.get("main", {}).get(group_key)
+    ra_override = state.overrides.get("ra", {}).get(group_key)
     return [
         {
             "id": rom.id,

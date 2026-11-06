@@ -8,7 +8,7 @@ from retroperfect.dat import DatIndex, parse_dat, parse_logiqx_dat
 from retroperfect.models import ActionMode, ExportLayout, OutputBucket, Platform, ProfileOutput, SelectionProfile
 from retroperfect.profile import DEFAULT_PROFILE
 from retroperfect.ra import init_cache
-from retroperfect.rules import build_manifest
+from retroperfect.rules import MOTIVO_1G1R, MOTIVO_OVERRIDE, build_manifest
 from retroperfect.scanner import scan_directory
 
 
@@ -61,7 +61,9 @@ def test_manual_override_wins(tmp_path: Path) -> None:
     )
     assert len(manifest.entries) == 1
     assert manifest.entries[0].source_path.endswith("Game (USA).nes")
-    assert "manual override" in " ".join(manifest.entries[0].explanation).lower()
+    # Por la constante, no por el texto: así traducir el motivo no rompe el test
+    # ni, peor, deja la interfaz sin el icono en silencio.
+    assert MOTIVO_OVERRIDE in " ".join(manifest.entries[0].explanation).lower()
 
 
 def test_strict_1g1r_excludes_roms_without_dat_match(tmp_path: Path) -> None:
@@ -71,7 +73,7 @@ def test_strict_1g1r_excludes_roms_without_dat_match(tmp_path: Path) -> None:
     profile = SelectionProfile(outputs=[ProfileOutput(bucket=OutputBucket.MAIN, strict_1g1r=True)])
     manifest = build_manifest(scan, profile, [OutputBucket.MAIN], output_dir=tmp_path / "out", action=ActionMode.COPY)
     assert manifest.entries == []
-    assert any("strict 1g1r" in " ".join(decision.reasons).lower() for decision in manifest.discarded)
+    assert any(MOTIVO_1G1R.lower() in " ".join(decision.reasons).lower() for decision in manifest.discarded)
 
 
 def test_strict_1g1r_collapses_regions_without_parent_clone(tmp_path: Path) -> None:
@@ -398,3 +400,56 @@ def test_delete_manifest_protects_shared_containers(tmp_path: Path) -> None:
     profile = SelectionProfile(outputs=[ProfileOutput(bucket=OutputBucket.MAIN, strict_1g1r=False)])
     manifest = build_manifest(scan, profile, [OutputBucket.MAIN], output_dir=None, action=ActionMode.DELETE)
     assert manifest.entries == []
+
+
+def test_cada_icono_del_plan_sale_de_un_motivo_real(tmp_path: Path) -> None:
+    """Candado del acoplamiento entre los motivos y los iconos de la interfaz.
+
+    La GUI deduce el icono buscando fragmentos dentro del texto del motivo. Con
+    los fragmentos escritos a mano en su módulo, traducir o matizar un motivo
+    dejaba la fila sin icono y ningún test se enteraba.
+    """
+    from retroperfect.gui_rows import _plan_reason_icons
+    from retroperfect.rules import explain_score
+
+    (tmp_path / "Game (Spain) (Es).nes").write_bytes(b"ES")
+    (tmp_path / "Game (USA) (En).nes").write_bytes(b"US")
+    scan = scan_directory(tmp_path, Platform.NES)
+    output = ProfileOutput(bucket=OutputBucket.MAIN)
+
+    iconos = _plan_reason_icons(["Seleccionado como mejor candidato", *explain_score(scan.roms[0], output)])
+
+    assert "🌍 región" in iconos
+    assert "💬 idioma" in iconos
+    assert "🔢 revisión" in iconos
+    assert iconos != "ℹ️", "los motivos reales no produjeron ni un icono"
+
+
+def test_el_icono_de_override_sale_del_manifiesto_real(tmp_path: Path) -> None:
+    from retroperfect.gui_rows import _plan_reason_icons
+
+    (tmp_path / "Game (Spain).nes").write_bytes(b"ES")
+    (tmp_path / "Game (USA).nes").write_bytes(b"US")
+    scan = scan_directory(tmp_path, Platform.NES)
+    usa = next(rom for rom in scan.roms if "USA" in rom.source_path)
+    profile = SelectionProfile(outputs=[ProfileOutput(bucket=OutputBucket.MAIN)])
+
+    manifest = build_manifest(scan, profile, [OutputBucket.MAIN], output_dir=tmp_path / "out", action=ActionMode.COPY, overrides={"main": {"Game": usa.id}})
+
+    assert "🎯 override" in _plan_reason_icons(manifest.entries[0].explanation)
+
+
+def test_los_motivos_respetan_las_mayusculas_de_DAT_y_RetroAchievements(tmp_path: Path) -> None:
+    """`str.capitalize()` pasa el resto a minúsculas: dejaba "Coincide con el
+    dat" y "compatible con retroachievements" en el plan que lee el usuario."""
+    from retroperfect.rules import explain_score
+
+    (tmp_path / "Game (Europe).nes").write_bytes(b"EU")
+    scan = scan_directory(tmp_path, Platform.NES)
+    profile = SelectionProfile(outputs=[ProfileOutput(bucket=OutputBucket.MAIN)])
+    manifest = build_manifest(scan, profile, [OutputBucket.MAIN], output_dir=tmp_path / "out", action=ActionMode.COPY)
+
+    texto = " ".join(manifest.entries[0].explanation + explain_score(scan.roms[0], profile.outputs[0]))
+
+    assert "el dat" not in texto, texto
+    assert "retroachievements" not in texto, texto

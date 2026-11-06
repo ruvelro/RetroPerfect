@@ -290,7 +290,7 @@ def _fetch_torrent(location: str) -> list[RemoteFile]:
 
 def _open_zip(location: str) -> zipfile.ZipFile:
     if "://" in location and not location.startswith("file://"):
-        return zipfile.ZipFile(HttpRangeReader(location))  # type: ignore[arg-type]
+        return zipfile.ZipFile(HttpRangeReader(location))
     path = Path(location[7:] if location.startswith("file://") else location).expanduser()
     if not path.is_file():
         raise RuntimeError(f"El archivo ZIP '{path}' no existe o no es accesible.")

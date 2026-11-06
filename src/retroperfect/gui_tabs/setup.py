@@ -20,6 +20,7 @@ from ..gui_rows import (
 )
 from ..gui_state import _current_platform, _log_activity, busy, guarded, state
 from ..gui_widgets import _path_picker
+from ..i18n import _
 from ..models import SelectionProfile
 from ..platforms import platform_spec
 from ..ra import annotate_scan_with_ra, credentials_path, ra_sync_status, save_credentials, sync_ra_hashes, sync_ra_patch_details
@@ -28,7 +29,7 @@ from ..ra import annotate_scan_with_ra, credentials_path, ra_sync_status, save_c
 def build(ctx: UiContext) -> None:
     with ui.tab_panel(ctx.setup_tab).classes("p-0"):
         with ui.column().classes(_panel_class() + " mb-4"):
-            ui.label("Resumen de plataforma").classes("text-lg font-semibold")
+            ui.label(_("Resumen de plataforma")).classes("text-lg font-semibold")
             with ui.row().classes("items-center gap-3"):
                 setup_platform_icon_box = ui.element("div")
                 with ui.column().classes("gap-0"):
@@ -58,21 +59,21 @@ def build(ctx: UiContext) -> None:
             refresh_setup_platform_summary()
 
         with ui.row().classes("w-full gap-3 mb-4"):
-            ui.label("1 Origen: carpeta con ROMs de la plataforma o ZIPs").classes("rp-step-card border border-gray-200 rounded-md p-3")
-            ui.label("2 DAT: archivo .dat/.xml o ZIP DAT-o-MATIC").classes("rp-step-card border border-gray-200 rounded-md p-3")
-            ui.label("3 Salida: carpeta destino para copy/move").classes("rp-step-card border border-gray-200 rounded-md p-3")
-            ui.label("4 Escaneo: revisar antes de aplicar").classes("rp-step-card border border-gray-200 rounded-md p-3")
+            ui.label(_("1 Origen: carpeta con ROMs de la plataforma o ZIPs")).classes("rp-step-card border border-gray-200 rounded-md p-3")
+            ui.label(_("2 DAT: archivo .dat/.xml o ZIP DAT-o-MATIC")).classes("rp-step-card border border-gray-200 rounded-md p-3")
+            ui.label(_("3 Salida: carpeta destino para copy/move")).classes("rp-step-card border border-gray-200 rounded-md p-3")
+            ui.label(_("4 Escaneo: revisar antes de aplicar")).classes("rp-step-card border border-gray-200 rounded-md p-3")
         with ui.grid(columns=2).classes("w-full gap-4"):
             with ui.column().classes(_panel_class()):
-                ui.label("Origen y salida").classes("text-lg font-semibold")
-                source = ui.input("Carpeta del romset o archivo ROM/ZIP").props("outlined readonly").classes("w-full")
+                ui.label(_("Origen y salida")).classes("text-lg font-semibold")
+                source = ui.input(_("Carpeta del romset o archivo ROM/ZIP")).props("outlined readonly").classes("w-full")
                 ctx.header_refs["source"] = source
                 source_dialog = _path_picker(source, choose="any", suffixes=_source_suffixes())
-                ui.button("Buscar origen", icon="folder_open", on_click=source_dialog.open).props("color=primary").classes("w-fit")
-                outdir = ui.input("Carpeta de salida").props("outlined readonly").classes("w-full")
+                ui.button(_("Buscar origen"), icon="folder_open", on_click=source_dialog.open).props("color=primary").classes("w-fit")
+                outdir = ui.input(_("Carpeta de salida")).props("outlined readonly").classes("w-full")
                 ctx.header_refs["outdir"] = outdir
                 out_dialog = _path_picker(outdir, choose="directory")
-                ui.button("Elegir salida", icon="create_new_folder", on_click=out_dialog.open).props("outline").classes("w-fit")
+                ui.button(_("Elegir salida"), icon="create_new_folder", on_click=out_dialog.open).props("outline").classes("w-fit")
                 arcade_mode = ui.select(
                     {
                         "auto": "Arcade: detectar split/merged automáticamente",
@@ -80,7 +81,7 @@ def build(ctx: UiContext) -> None:
                         "split": "Arcade split/merged: conservar dependencias",
                     },
                     value="auto",
-                    label="Modo arcade",
+                    label=_("Modo arcade"),
                 ).props("outlined").classes("w-full")
 
                 def save_project_click() -> None:
@@ -124,12 +125,12 @@ def build(ctx: UiContext) -> None:
                     finally:
                         state.suppress_setup_dirty = False
                 with ui.row().classes("items-center"):
-                    ui.button("Guardar sesión", icon="save", on_click=save_project_click).props("outline")
-                    ui.button("Cargar sesión", icon="folder_open", on_click=load_project_click).props("outline")
+                    ui.button(_("Guardar sesión"), icon="save", on_click=save_project_click).props("outline")
+                    ui.button(_("Cargar sesión"), icon="folder_open", on_click=load_project_click).props("outline")
 
             with ui.column().classes(_panel_class()):
-                ui.label("DAT de referencia").classes("text-lg font-semibold")
-                dat = ui.input("Archivo DAT/XML/ZIP").props("outlined readonly").classes("w-full")
+                ui.label(_("DAT de referencia")).classes("text-lg font-semibold")
+                dat = ui.input(_("Archivo DAT/XML/ZIP")).props("outlined readonly").classes("w-full")
                 ctx.header_refs["dat"] = dat
                 dat_dialog = _path_picker(dat, choose="file", suffixes={".dat", ".xml", ".zip"})
                 def setup_value_changed() -> None:
@@ -140,20 +141,20 @@ def build(ctx: UiContext) -> None:
                 outdir.on_value_change(lambda _: setup_value_changed())
                 dat.on_value_change(lambda _: setup_value_changed())
                 with ui.row().classes("items-center"):
-                    ui.button("Buscar en el PC", icon="upload_file", on_click=dat_dialog.open).props("outline")
+                    ui.button(_("Buscar en el PC"), icon="upload_file", on_click=dat_dialog.open).props("outline")
                     dat_status = ui.label().classes("text-sm text-gray-600")
                 def suggest_dat_click() -> None:
                     suggestion = suggest_dat_for_source(Path(source.value) if source.value else None, _current_platform())
                     if not suggestion:
-                        dat_status.text = "No hay DATs instalados para sugerir. Importa o descarga uno en DATs."
+                        dat_status.text = _("No hay DATs instalados para sugerir. Importa o descarga uno en DATs.")
                         return
                     dat.value = suggestion.path
                     dat_status.text = f"Sugerido: {suggestion.name} ({suggestion.header_mode})"
                     ctx.refresh_needed_table()
 
-                ui.button("Sugerir DAT según romset", icon="auto_awesome", on_click=suggest_dat_click).props("outline").classes("w-fit")
+                ui.button(_("Sugerir DAT según romset"), icon="auto_awesome", on_click=suggest_dat_click).props("outline").classes("w-fit")
                 source_options = {item.id: item.label for item in list_dat_sources(_current_platform().value)}
-                dat_source = ui.select(source_options, value=next(iter(source_options)), label="Descargar DAT").props("outlined").classes("w-full")
+                dat_source = ui.select(source_options, value=next(iter(source_options)), label=_("Descargar DAT")).props("outlined").classes("w-full")
 
                 async def download_dat_click() -> None:
                     with guarded(dat_status, "No se pudo descargar", busy_label="descarga de DAT"):
@@ -163,11 +164,11 @@ def build(ctx: UiContext) -> None:
                         ctx.refresh_dat_table()
                         ctx.refresh_needed_table()
 
-                ui.button("Descargar seleccionado", icon="download", on_click=download_dat_click).props("color=primary").classes("w-fit")
+                ui.button(_("Descargar seleccionado"), icon="download", on_click=download_dat_click).props("color=primary").classes("w-fit")
                 validation_status = ui.label().classes("text-sm text-gray-600")
 
                 async def validate_click() -> None:
-                    validation_status.text = "Validando configuración..."
+                    validation_status.text = _("Validando configuración...")
                     with guarded(validation_status, "No se pudo validar", busy_label="validación de la configuración"):
                         issues = await asyncio.to_thread(
                             validate_setup,
@@ -179,30 +180,30 @@ def build(ctx: UiContext) -> None:
                         ctx.set_setup_ready(ready)
                         validation_status.text = "Configuración lista. Ya puedes continuar con Perfil, Escaneo y Plan." if ready else " · ".join(issues)
 
-                ui.button("Validar configuración", icon="verified", on_click=validate_click).props("outline").classes("w-fit")
+                ui.button(_("Validar configuración"), icon="verified", on_click=validate_click).props("outline").classes("w-fit")
 
         with ui.column().classes(_panel_class() + " mt-4"):
-            ui.label("RetroAchievements").classes("text-lg font-semibold")
-            ui.label("RA se comprueba por hash: primero cachea la lista oficial de la plataforma y, tras escanear, marca cada ROM que coincida. Los detalles de parches usan Supported Game Files y guardan labels/PatchUrl localmente.").classes("text-sm text-gray-600")
-            ui.label("Límite detalles: un valor bajo va bien para pruebas rápidas. Para mejorar la detección de parches y acercarse a una colección RA perfecta, súbelo hasta cubrir todos los juegos cacheados de la plataforma.").classes("text-sm text-gray-600")
+            ui.label(_("RetroAchievements")).classes("text-lg font-semibold")
+            ui.label(_("RA se comprueba por hash: primero cachea la lista oficial de la plataforma y, tras escanear, marca cada ROM que coincida. Los detalles de parches usan Supported Game Files y guardan labels/PatchUrl localmente.")).classes("text-sm text-gray-600")
+            ui.label(_("Límite detalles: un valor bajo va bien para pruebas rápidas. Para mejorar la detección de parches y acercarse a una colección RA perfecta, súbelo hasta cubrir todos los juegos cacheados de la plataforma.")).classes("text-sm text-gray-600")
             ra_cache_status = ui.label(_ra_status_label(_current_platform())).classes("text-sm text-gray-600")
             with ui.row().classes("w-full gap-3"):
-                username = ui.input("Usuario").props("outlined").classes("min-w-72")
-                api_key = ui.input("API key", password=True).props("outlined").classes("min-w-96")
-                details_limit = ui.number("Límite detalles", value=150, min=1, max=2000, step=50).props("outlined").classes("w-40")
-                details_delay = ui.number("Pausa RA (s)", value=1.2, min=0.5, max=10, step=0.1).props("outlined").classes("w-40")
+                username = ui.input(_("Usuario")).props("outlined").classes("min-w-72")
+                api_key = ui.input(_("API key"), password=True).props("outlined").classes("min-w-96")
+                details_limit = ui.number(_("Límite detalles"), value=150, min=1, max=2000, step=50).props("outlined").classes("w-40")
+                details_delay = ui.number(_("Pausa RA (s)"), value=1.2, min=0.5, max=10, step=0.1).props("outlined").classes("w-40")
             ra_status = ui.label(f"Credenciales: {'configuradas' if credentials_path().exists() else 'pendientes'}").classes("text-sm text-gray-600")
             ra_details_progress = ui.linear_progress(value=0, show_value=False).props("instant-feedback").classes("w-full")
-            ra_details_progress_label = ui.label("Detalles RA: 0% · 0 / 0 juegos · 0 hashes actualizados").classes("text-sm text-gray-600")
+            ra_details_progress_label = ui.label(_("Detalles RA: 0% · 0 / 0 juegos · 0 hashes actualizados")).classes("text-sm text-gray-600")
 
             async def sync_ra_click() -> None:
                 if not username.value or not api_key.value:
-                    ra_status.text = "Introduce usuario y API key para sincronizar."
+                    ra_status.text = _("Introduce usuario y API key para sincronizar.")
                     return
                 try:
                     save_credentials(username.value, api_key.value)
                     platform = _current_platform()
-                    ra_status.text = "Sincronizando hashes RA..."
+                    ra_status.text = _("Sincronizando hashes RA...")
                     with busy("sincronización de hashes RetroAchievements"):
                         count = await asyncio.to_thread(sync_ra_hashes, platform, username.value, api_key.value)
                     ra_status.text = f"Listo: {count} hashes RA cacheados."
@@ -215,7 +216,7 @@ def build(ctx: UiContext) -> None:
                 try:
                     platform = _current_platform()
                     state.ra_details_progress = {"current": 0, "total": int(details_limit.value or 150), "updated": 0, "running": True}
-                    ra_status.text = "Sincronizando detalles RA: labels, nombres de hash y PatchUrl..."
+                    ra_status.text = _("Sincronizando detalles RA: labels, nombres de hash y PatchUrl...")
                     def progress_update(update: dict[str, int]) -> None:
                         state.ra_details_progress = {**update, "running": True}
 
@@ -247,8 +248,8 @@ def build(ctx: UiContext) -> None:
                     ra_status.text = f"Error detalles RA: {exc}"
 
             with ui.row().classes("items-center gap-2"):
-                ui.button("Guardar y sincronizar hashes", icon="sync", on_click=sync_ra_click).props("color=primary")
-                ui.button("Localizar parches RA", icon="healing", on_click=sync_ra_details_click).props("outline")
+                ui.button(_("Guardar y sincronizar hashes"), icon="sync", on_click=sync_ra_click).props("color=primary")
+                ui.button(_("Localizar parches RA"), icon="healing", on_click=sync_ra_details_click).props("outline")
 
                 async def complete_details_click() -> None:
                     status = ra_sync_status(_current_platform())
@@ -260,7 +261,7 @@ def build(ctx: UiContext) -> None:
                     ra_status.text = f"Límite ajustado a {details_limit.value}. Pendientes estimados: {remaining}. Iniciando detalles..."
                     await sync_ra_details_click()
 
-                ui.button("Continuar pendientes RA", icon="done_all", on_click=complete_details_click).props("outline")
+                ui.button(_("Continuar pendientes RA"), icon="done_all", on_click=complete_details_click).props("outline")
 
             def refresh_ra_details_progress() -> None:
                 progress = state.ra_details_progress

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import binascii
 import hashlib
+from array import array
 
 from .models import Platform, RomHash
 from .platforms import platform_spec
@@ -165,10 +166,27 @@ def n64_big_endian_payload(data: bytes) -> bytes:
     return data
 
 
+def _swap_typecode(width: int) -> str | None:
+    """Código de `array` cuyos elementos miden `width` bytes, si lo hay."""
+    return next((code for code in ("H", "I", "L") if array(code).itemsize == width), None)
+
+
 def _swap_every(data: bytes, width: int) -> bytes:
-    out = bytearray()
+    """Invierte cada grupo de `width` bytes; la cola que no completa un grupo se deja igual.
+
+    Lo hace `array.byteswap`, que es un bucle en C: el bucle en Python recorría
+    los bytes de a dos y una ROM de N64 byteswapped de 64 MB salían 32 millones
+    de iteraciones solo para poder hashearla.
+    """
     limit = len(data) - (len(data) % width)
-    for index in range(0, limit, width):
-        out.extend(reversed(data[index : index + width]))
-    out.extend(data[limit:])
-    return bytes(out)
+    code = _swap_typecode(width)
+    if code is None:  # ninguna plataforma conocida, pero el resultado no cambia
+        out = bytearray()
+        for index in range(0, limit, width):
+            out.extend(reversed(data[index : index + width]))
+        out.extend(data[limit:])
+        return bytes(out)
+    values = array(code)
+    values.frombytes(data[:limit])
+    values.byteswap()
+    return values.tobytes() + data[limit:]

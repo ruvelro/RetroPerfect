@@ -56,3 +56,25 @@ def test_busy_reason_detects_scan_in_progress() -> None:
 def test_busy_reason_detects_ra_sync() -> None:
     state.ra_details_progress = {"running": True}
     assert busy_reason() == "sincronización de RetroAchievements en curso"
+
+
+def test_la_interfaz_no_se_publica_en_la_red_sin_querer() -> None:
+    """No hay usuarios ni contraseñas: quien llegue al puerto puede explorar el
+    disco con el selector de archivos y borrar."""
+    import pytest
+
+    from retroperfect.gui import assert_host_is_safe
+
+    for local in ["127.0.0.1", "::1", "localhost", ""]:
+        assert_host_is_safe(local)
+
+    with pytest.raises(RuntimeError, match="--allow-remote"):
+        assert_host_is_safe("0.0.0.0")
+    with pytest.raises(RuntimeError, match="publica la interfaz en la red"):
+        assert_host_is_safe("192.168.1.50")
+
+
+def test_con_allow_remote_se_respeta_la_decision_del_usuario() -> None:
+    from retroperfect.gui import assert_host_is_safe
+
+    assert_host_is_safe("0.0.0.0", allow_remote=True)

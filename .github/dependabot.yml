@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Las acciones son la vía por la que un repo ajeno acaba ejecutando código en
+  # el workflow que publica en PyPI: conviene tenerlas al día y fijadas.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "CI"
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "Deps"
+    groups:
+      desarrollo:
+        patterns: ["pytest*", "ruff", "mypy", "types-*"]

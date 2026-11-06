@@ -209,6 +209,30 @@ class ExportLayout(StrEnum):
     ORGANIZED = "organized"
 
 
+class ContainerMode(StrEnum):
+    """Qué hacer con los ZIP y 7z al curar.
+
+    `keep` copia el contenedor tal cual, que es lo que se hacía siempre: si
+    dentro hay el juego elegido y dos descartes, los tres viajan. `extract` saca
+    del contenedor solo lo que el plan conserva, como archivo suelto. `rezip`
+    escribe un ZIP nuevo por juego con solo sus archivos, que es la forma en la
+    que se distribuyen los sets de cartuchos y de arcade. `torrentzip` hace lo
+    mismo pero de forma canónica, para que el mismo contenido dé siempre el
+    mismo archivo y la colección se pueda verificar o compartir por hash.
+    """
+
+    KEEP = "keep"
+    EXTRACT = "extract"
+    REZIP = "rezip"
+    TORRENTZIP = "torrentzip"
+
+
+# Los modos que escriben un ZIP nuevo por juego en vez de un archivo por ROM.
+# Varias entradas comparten destino a propósito, y quien aplica y quien hace el
+# preflight tienen que saberlo.
+ARCHIVE_MODES = frozenset({ContainerMode.REZIP, ContainerMode.TORRENTZIP})
+
+
 class RomHash(BaseModel):
     crc32: str
     md5: str
@@ -338,6 +362,10 @@ class ManifestEntry(BaseModel):
     source_path: str
     source_inner_path: str | None = None
     source_md5: str | None = None
+    # Tamaño del contenido que se va a escribir, que con un contenedor no es el
+    # del archivo de origen: el preflight necesita el de la ROM, no el del ZIP.
+    source_size: int | None = None
+    container_mode: ContainerMode = ContainerMode.KEEP
     destination_path: str | None = None
     rom_id: str
     dat_name: str | None = None
@@ -356,6 +384,27 @@ class ManifestPlaylist(BaseModel):
     entries: list[str] = Field(default_factory=list)
 
 
+class ManifestArchiveMember(BaseModel):
+    """Un archivo que entra en un ZIP del plan."""
+
+    source_path: str
+    source_inner_path: str | None = None
+    name: str
+    md5: str
+    size: int = 0
+
+
+class ManifestArchive(BaseModel):
+    """Un ZIP que el plan crea con solo los archivos que conserva del juego."""
+
+    path: str
+    title: str
+    members: list[ManifestArchiveMember] = Field(default_factory=list)
+    # El modo con el que se planificó: `torrentzip` escribe el ZIP de forma
+    # canónica, y eso lo decide el plan, no quien aplica.
+    mode: ContainerMode = ContainerMode.REZIP
+
+
 class Manifest(BaseModel):
     id: str
     scan_id: str
@@ -365,3 +414,4 @@ class Manifest(BaseModel):
     entries: list[ManifestEntry] = Field(default_factory=list)
     discarded: list[CandidateDecision] = Field(default_factory=list)
     playlists: list[ManifestPlaylist] = Field(default_factory=list)
+    archives: list[ManifestArchive] = Field(default_factory=list)

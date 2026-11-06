@@ -252,21 +252,38 @@ def sync_ra_patch_details(
 
 
 def annotate_scan_with_ra(scan: ScanResult, cache: Path | None = None) -> ScanResult:
+    """Marca cada ROM con su juego de RetroAchievements, si la caché lo conoce.
+
+    Carga de una vez la tabla de las plataformas del escaneo y cruza en memoria:
+    antes era una consulta por ROM, así que una colección de 20.000 archivos
+    eran 20.000 consultas. Cargar la tabla entera evita además el límite de
+    parámetros de SQLite, que obligaría a trocear una consulta con un `IN`.
+    """
+    platforms = {rom.platform.value for rom in scan.roms if rom.hashes.ra_hash}
+    if not platforms:
+        return scan
     conn = init_cache(cache)
+    try:
+        cached = {
+            (platform, row[0]): row[1:]
+            for platform in platforms
+            for row in conn.execute(
+                "SELECT hash, game_id, title, hash_name, labels, patch_url FROM ra_hashes WHERE platform = ?",
+                (platform,),
+            )
+        }
+    finally:
+        conn.close()
     for rom in scan.roms:
         if not rom.hashes.ra_hash:
             continue
-        row = conn.execute(
-            "SELECT game_id, title, hash_name, labels, patch_url FROM ra_hashes WHERE platform = ? AND hash = ?",
-            (rom.platform.value, rom.hashes.ra_hash.lower()),
-        ).fetchone()
+        row = cached.get((rom.platform.value, rom.hashes.ra_hash.lower()))
         if row:
             rom.ra_game_id = int(row[0])
             rom.ra_title = row[1]
             rom.ra_hash_name = row[2]
             rom.ra_labels = json.loads(row[3]) if row[3] else []
             rom.ra_patch_url = row[4]
-    conn.close()
     return scan
 
 
@@ -321,8 +338,31 @@ def ra_sync_status(platform: Platform, cache: Path | None = None) -> dict[str, s
     return status
 
 
+def ra_patch_index(platform: Platform, cache: Path | None = None) -> dict[str, list[RaPatchCandidate]]:
+    """Parches oficiales de la plataforma, agrupados por título normalizado.
+
+    Se construye de una pasada porque la curación lo consulta una vez por grupo
+    del DAT: antes cada consulta abría la base, leía TODAS las filas con parche
+    y filtraba en Python, así que un set de 2.000 grupos salían 2.000 lecturas
+    completas de la tabla.
+    """
+    index: dict[str, list[RaPatchCandidate]] = {}
+    for titulo, candidate in _patch_rows(platform, cache):
+        index.setdefault(titulo, []).append(candidate)
+    return index
+
+
 def find_ra_patch_candidates(platform: Platform, title: str, cache: Path | None = None) -> list[RaPatchCandidate]:
-    normalized_title = _normalize_title(title)
+    normalized_title = normalize_ra_title(title)
+    return [candidate for titulo, candidate in _patch_rows(platform, cache) if titulo == normalized_title]
+
+
+def _patch_rows(platform: Platform, cache: Path | None) -> list[tuple[str, RaPatchCandidate]]:
+    """(título normalizado, candidato) de cada hash con parche de la plataforma.
+
+    Un mismo parche puede entrar por el título del juego y por el del hash, que
+    no siempre coinciden; se devuelve una pareja por cada forma de encontrarlo.
+    """
     conn = init_cache(cache)
     rows = conn.execute(
         """
@@ -334,24 +374,24 @@ def find_ra_patch_candidates(platform: Platform, title: str, cache: Path | None 
         (platform.value,),
     ).fetchall()
     conn.close()
-    candidates: list[RaPatchCandidate] = []
+    pairs: list[tuple[str, RaPatchCandidate]] = []
     for row in rows:
         labels = json.loads(row[4]) if row[4] else []
         hash_title = parse_no_intro_name(row[3]).title if row[3] else ""
-        if normalized_title not in {_normalize_title(row[1] or ""), _normalize_title(hash_title)}:
-            continue
-        candidates.append(
-            RaPatchCandidate(
-                game_id=int(row[0]),
-                title=row[1],
-                md5=row[2],
-                hash_name=row[3],
-                labels=labels,
-                patch_url=row[5],
-            )
+        candidate = RaPatchCandidate(
+            game_id=int(row[0]),
+            title=row[1],
+            md5=row[2],
+            hash_name=row[3],
+            labels=labels,
+            patch_url=row[5],
         )
-    return candidates
+        for titulo in {normalize_ra_title(row[1] or ""), normalize_ra_title(hash_title)}:
+            if titulo:
+                pairs.append((titulo, candidate))
+    return pairs
 
 
-def _normalize_title(title: str) -> str:
+def normalize_ra_title(title: str) -> str:
+    """Título comparable: la curación y la caché RA tienen que normalizar igual."""
     return " ".join(title.casefold().replace("-", " ").replace("_", " ").split())

@@ -1,12 +1,54 @@
 """Filas de decisiones, manifiesto y perfiles de selección de la GUI."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from ..diagnostics import build_patch_queue
+from ..gui_context import ValueControl
 from ..metadata import with_part
 from ..models import ExportLayout, OutputBucket, ProfileOutput, ScannedRom, SelectionProfile
 from ..profile import list_profiles
+from ..rules import (
+    MOTIVO_1G1R,
+    MOTIVO_DAT_COINCIDE,
+    MOTIVO_DAT_OK,
+    MOTIVO_IDIOMA,
+    MOTIVO_OVERRIDE,
+    MOTIVO_PARCHE,
+    MOTIVO_RA,
+    MOTIVO_REGION,
+    MOTIVO_REVISION,
+    MOTIVO_SIN_DAT,
+    MOTIVO_SIN_RA,
+    MOTIVO_TAG_EXCLUIDO,
+)
+
+# Los fragmentos los define rules.py, que es quien escribe los motivos: si se
+# copian aquí, traducir o matizar uno deja la fila sin su icono en silencio.
+_ICONOS_POR_MOTIVO: tuple[tuple[str, str], ...] = (
+    (MOTIVO_OVERRIDE, "🎯 override"),
+    (MOTIVO_1G1R, "🎮 1G1R"),
+    (MOTIVO_PARCHE, "🩹 parche"),
+    (MOTIVO_REGION, "🌍 región"),
+    (MOTIVO_IDIOMA, "💬 idioma"),
+    (MOTIVO_REVISION, "🔢 revisión"),
+)
+
+
+def _iconos_comunes(text: str) -> list[str]:
+    """Iconos que salen igual en la pestaña Decisiones y en la tabla del plan."""
+    return [icono for fragmento, icono in _ICONOS_POR_MOTIVO if fragmento.lower() in text]
+
+
+def _icono_ra(text: str) -> str | None:
+    if MOTIVO_SIN_RA.lower() in text:
+        return "🏆 sin RA"
+    return "🏆 RA" if MOTIVO_RA.lower() in text else None
+
+
+def _hay_dat(text: str) -> bool:
+    return MOTIVO_DAT_OK.lower() in text or MOTIVO_DAT_COINCIDE.lower() in text
 
 REGIONS = ["Spain", "Europe", "World", "USA", "Japan", "Asia", "Brazil", "China", "Korea"]
 
@@ -42,37 +84,37 @@ def _scan_group_sample(scan, limit: int):
     return sample
 
 
-def _profile_from_controls(controls: dict[str, object]) -> SelectionProfile:
+def _profile_from_controls(controls: Mapping[str, ValueControl]) -> SelectionProfile:
     outputs: list[ProfileOutput] = []
-    if controls["main_enabled"].value:  # type: ignore[attr-defined]
+    if controls["main_enabled"].value:
         outputs.append(
             ProfileOutput(
                 bucket=OutputBucket.MAIN,
-                require_ra=controls["main_require_ra"].value,  # type: ignore[attr-defined]
-                strict_1g1r=controls["main_strict_1g1r"].value,  # type: ignore[attr-defined]
-                prefer_ra_compatible=controls["main_prefer_ra"].value,  # type: ignore[attr-defined]
-                region_priority=list(controls["main_regions"].value),  # type: ignore[attr-defined]
-                language_priority=list(controls["main_languages"].value),  # type: ignore[attr-defined]
-                tag_excludes=list(controls["main_tags"].value),  # type: ignore[attr-defined]
-                prefer_newest_revision=controls["main_newest"].value,  # type: ignore[attr-defined]
+                require_ra=controls["main_require_ra"].value,
+                strict_1g1r=controls["main_strict_1g1r"].value,
+                prefer_ra_compatible=controls["main_prefer_ra"].value,
+                region_priority=list(controls["main_regions"].value),
+                language_priority=list(controls["main_languages"].value),
+                tag_excludes=list(controls["main_tags"].value),
+                prefer_newest_revision=controls["main_newest"].value,
             )
         )
-    if controls["ra_enabled"].value:  # type: ignore[attr-defined]
+    if controls["ra_enabled"].value:
         outputs.append(
             ProfileOutput(
                 bucket=OutputBucket.RA,
                 require_ra=True,
-                strict_1g1r=controls["ra_strict_1g1r"].value,  # type: ignore[attr-defined]
-                region_priority=list(controls["ra_regions"].value),  # type: ignore[attr-defined]
-                language_priority=list(controls["ra_languages"].value),  # type: ignore[attr-defined]
-                tag_excludes=list(controls["ra_tags"].value),  # type: ignore[attr-defined]
-                prefer_newest_revision=controls["ra_newest"].value,  # type: ignore[attr-defined]
+                strict_1g1r=controls["ra_strict_1g1r"].value,
+                region_priority=list(controls["ra_regions"].value),
+                language_priority=list(controls["ra_languages"].value),
+                tag_excludes=list(controls["ra_tags"].value),
+                prefer_newest_revision=controls["ra_newest"].value,
             )
         )
     return SelectionProfile(
-        name=controls["profile_name"].value or "custom",  # type: ignore[attr-defined]
-        export_layout=ExportLayout(controls["export_layout"].value),  # type: ignore[attr-defined]
-        auto_patch_ra=controls["auto_patch_ra"].value,  # type: ignore[attr-defined]
+        name=controls["profile_name"].value or "custom",
+        export_layout=ExportLayout(controls["export_layout"].value),
+        auto_patch_ra=controls["auto_patch_ra"].value,
         outputs=outputs,
     )
 
@@ -81,27 +123,27 @@ def _profile_options() -> dict[str, str]:
     return {str(path): name for name, path in list_profiles().items()}
 
 
-def _apply_profile_to_controls(profile: SelectionProfile, controls: dict[str, object]) -> None:
-    controls["profile_name"].value = profile.name  # type: ignore[attr-defined]
-    controls["export_layout"].value = profile.export_layout.value  # type: ignore[attr-defined]
-    controls["auto_patch_ra"].value = profile.auto_patch_ra  # type: ignore[attr-defined]
+def _apply_profile_to_controls(profile: SelectionProfile, controls: Mapping[str, ValueControl]) -> None:
+    controls["profile_name"].value = profile.name
+    controls["export_layout"].value = profile.export_layout.value
+    controls["auto_patch_ra"].value = profile.auto_patch_ra
     outputs = {output.bucket: output for output in profile.outputs}
     main = outputs.get(OutputBucket.MAIN, ProfileOutput(bucket=OutputBucket.MAIN))
     ra = outputs.get(OutputBucket.RA, ProfileOutput(bucket=OutputBucket.RA, require_ra=True))
-    controls["main_enabled"].value = OutputBucket.MAIN in outputs  # type: ignore[attr-defined]
-    controls["main_require_ra"].value = main.require_ra  # type: ignore[attr-defined]
-    controls["main_strict_1g1r"].value = main.strict_1g1r  # type: ignore[attr-defined]
-    controls["main_prefer_ra"].value = main.prefer_ra_compatible  # type: ignore[attr-defined]
-    controls["main_regions"].value = main.region_priority  # type: ignore[attr-defined]
-    controls["main_languages"].value = main.language_priority  # type: ignore[attr-defined]
-    controls["main_tags"].value = main.tag_excludes  # type: ignore[attr-defined]
-    controls["main_newest"].value = main.prefer_newest_revision  # type: ignore[attr-defined]
-    controls["ra_enabled"].value = OutputBucket.RA in outputs  # type: ignore[attr-defined]
-    controls["ra_strict_1g1r"].value = ra.strict_1g1r  # type: ignore[attr-defined]
-    controls["ra_regions"].value = ra.region_priority  # type: ignore[attr-defined]
-    controls["ra_languages"].value = ra.language_priority  # type: ignore[attr-defined]
-    controls["ra_tags"].value = ra.tag_excludes  # type: ignore[attr-defined]
-    controls["ra_newest"].value = ra.prefer_newest_revision  # type: ignore[attr-defined]
+    controls["main_enabled"].value = OutputBucket.MAIN in outputs
+    controls["main_require_ra"].value = main.require_ra
+    controls["main_strict_1g1r"].value = main.strict_1g1r
+    controls["main_prefer_ra"].value = main.prefer_ra_compatible
+    controls["main_regions"].value = main.region_priority
+    controls["main_languages"].value = main.language_priority
+    controls["main_tags"].value = main.tag_excludes
+    controls["main_newest"].value = main.prefer_newest_revision
+    controls["ra_enabled"].value = OutputBucket.RA in outputs
+    controls["ra_strict_1g1r"].value = ra.strict_1g1r
+    controls["ra_regions"].value = ra.region_priority
+    controls["ra_languages"].value = ra.language_priority
+    controls["ra_tags"].value = ra.tag_excludes
+    controls["ra_newest"].value = ra.prefer_newest_revision
 
 
 def _entry_reasons_by_rom(manifest) -> dict[str, list[str]]:
@@ -151,33 +193,18 @@ def _decision_detail(reasons: list[str], fallback: str) -> str:
     if not reasons:
         return fallback
     text = " ".join(reasons).lower()
-    labels: list[str] = []
-    if "manual override" in text:
-        labels.append("🎯 override")
-    if "strict 1g1r" in text:
-        labels.append("🎮 1G1R")
-    if "no compatible retroachievements" in text:
-        labels.append("🏆 sin RA")
-    elif "retroachievements" in text or "ra compatible" in text:
-        labels.append("🏆 RA")
-    if "patch metadata" in text or "rapatches" in text or "generated by patch" in text or "patch url" in text:
-        labels.append("🩹 parche")
-    if "excluded by tag" in text:
+    labels = _iconos_comunes(text)
+    if (ra := _icono_ra(text)) is not None:
+        labels.append(ra)
+    if MOTIVO_TAG_EXCLUIDO.lower() in text:
         labels.append("🏷️ tag excluido")
-    if "no dat match" in text:
+    if MOTIVO_SIN_DAT.lower() in text:
         labels.append("❌ sin DAT")
-    if "region priority" in text or "region rank" in text:
-        labels.append("🌍 región")
-    if "language priority" in text or "language rank" in text:
-        labels.append("💬 idioma")
-    if "revision" in text:
-        labels.append("🔢 revisión")
-    positive_dat = "dat verified" in text or "dat match:" in text or "another candidate has dat" in text
-    if positive_dat:
+    if _hay_dat(text):
         labels.append("✅ DAT")
-    if "lower priority" in text:
+    if "menor prioridad" in text:
         labels.append("🔁 mejor variante")
-    if "selected as best" in text:
+    if "mejor candidato" in text:
         labels.append("⭐ mejor")
     return " · ".join(dict.fromkeys(labels)) or fallback
 
@@ -233,23 +260,11 @@ def _variant_status(in_dat: bool, will_keep_main: bool, will_keep_ra: bool, plan
 
 def _plan_reason_icons(explanations: list[str]) -> str:
     text = " ".join(explanations).lower()
-    icons: list[str] = []
-    if "manual override" in text:
-        icons.append("🎯 override")
-    if "strict 1g1r" in text:
-        icons.append("🎮 1G1R")
-    if "dat match:" in text or "dat verified" in text:
+    icons = _iconos_comunes(text)
+    if _hay_dat(text):
         icons.append("✅ DAT")
-    if "retroachievements" in text or "ra compatible" in text:
+    if MOTIVO_RA.lower() in text:
         icons.append("🏆 RA")
-    if "patch metadata" in text or "rapatches" in text or "generated by patch" in text or "patch url" in text:
-        icons.append("🩹 parche")
-    if "region rank" in text or "region priority" in text:
-        icons.append("🌍 región")
-    if "language rank" in text or "language priority" in text:
-        icons.append("💬 idioma")
-    if "revision" in text:
-        icons.append("🔢 revisión")
     return " · ".join(dict.fromkeys(icons)) or "ℹ️"
 
 

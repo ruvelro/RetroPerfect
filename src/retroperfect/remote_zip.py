@@ -95,7 +95,7 @@ class HttpRangeReader(io.RawIOBase):
         self._pos += len(data)
         return data
 
-    def readinto(self, buffer) -> int:  # type: ignore[override]
+    def readinto(self, buffer) -> int:
         data = self.read(len(buffer))
         buffer[: len(data)] = data
         return len(data)
