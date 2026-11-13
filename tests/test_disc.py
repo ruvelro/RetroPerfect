@@ -180,3 +180,38 @@ def test_dreamcast_gdi_rejects_non_katana_track(tmp_path: Path) -> None:
     gdi = tmp_path / "otro.gdi"
     gdi.write_text('1\n3 45000 4 2048 "track03.bin" 0\n', encoding="utf-8")
     assert disc_ra_md5(gdi, "dreamcast") is None
+
+
+def test_el_hash_ra_sale_igual_de_una_imagen_dentro_de_un_zip(tmp_path: Path) -> None:
+    """El hash de disco lee sectores sueltos, así que necesita un archivo: las
+    imágenes comprimidas se quedaban sin hash RA y salían como incompatibles
+    con logros aunque no lo fueran."""
+    import zipfile
+
+    from retroperfect.models import Platform
+    from retroperfect.scanner import scan_directory
+
+    image, expected = _psx_image()
+    (tmp_path / "Suelto (Europe).iso").write_bytes(image)
+    with zipfile.ZipFile(tmp_path / "Comprimido (Europe).zip", "w", zipfile.ZIP_DEFLATED) as archivo:
+        archivo.writestr("Comprimido (Europe).iso", image)
+
+    scan = scan_directory(tmp_path, Platform.PS1)
+
+    assert {rom.hashes.ra_md5 for rom in scan.roms} == {expected}
+
+
+def test_un_cue_dentro_de_un_zip_no_finge_un_hash_ra(tmp_path: Path) -> None:
+    """Un .cue solo describe el layout y apunta a hermanos que, comprimidos, no
+    existen como ruta: mejor sin hash que con uno inventado."""
+    import zipfile
+
+    from retroperfect.models import Platform
+    from retroperfect.scanner import scan_directory
+
+    with zipfile.ZipFile(tmp_path / "Juego (Europe).zip", "w") as archivo:
+        archivo.writestr("Juego (Europe).cue", 'FILE "Juego (Europe).bin" BINARY\n  TRACK 01 MODE1/2352\n')
+
+    scan = scan_directory(tmp_path, Platform.PS1)
+
+    assert [rom.hashes.ra_md5 for rom in scan.roms] == [None]

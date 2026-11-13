@@ -3,8 +3,14 @@
   "configurations": [
     {
       "name": "retroperfect-gui",
-      "runtimeExecutable": ".venv313/bin/retroperfect",
-      "runtimeArgs": ["gui", "--port", "8080"],
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "retroperfect.cli",
+        "gui",
+        "--port",
+        "8080"
+      ],
       "port": 8080
     }
   ]

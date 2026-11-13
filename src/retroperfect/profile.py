@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 
 import yaml
@@ -71,9 +72,45 @@ RECOMMENDED_PROFILES: dict[str, SelectionProfile] = {
 
 
 def load_profile(profile: str | Path) -> SelectionProfile:
-    if str(profile) == "default":
-        return DEFAULT_PROFILE
+    """Carga un perfil por nombre o por ruta.
+
+    Acepta "default", el nombre de un perfil recomendado ("1G1R + RA"), el de
+    uno guardado por el usuario, y la ruta de un .yaml/.json. Antes solo
+    entendía "default" y rutas, así que los perfiles recomendados que anuncia
+    el README y los guardados desde la GUI no se podían usar desde la CLI:
+    `--profile "1G1R + RA"` moría con un FileNotFoundError.
+    """
     path = Path(profile)
+    if path.is_file():
+        return _load_profile_file(path)
+    name = str(profile).strip()
+    if name == "default":
+        return DEFAULT_PROFILE.model_copy(deep=True)
+    recommended = _match_name(RECOMMENDED_PROFILES, name)
+    if recommended is not None:
+        return RECOMMENDED_PROFILES[recommended].model_copy(deep=True)
+    guardados = list_profiles()
+    saved = _match_name(guardados, name)
+    if saved is not None and saved != "default":
+        return _load_profile_file(guardados[saved])
+    raise ValueError(f"No existe el perfil '{name}'. Disponibles: {', '.join(available_profile_names())}. También puedes pasar la ruta de un .yaml o .json.")
+
+
+def available_profile_names() -> list[str]:
+    """Nombres que acepta `load_profile`, para la ayuda y los mensajes de error."""
+    return ["default", *RECOMMENDED_PROFILES, *(name for name in list_profiles() if name != "default")]
+
+
+def _match_name(options: Iterable[str], name: str) -> str | None:
+    """Nombre tal y como está en el origen, ignorando mayúsculas y espacios."""
+    claves = list(options)
+    if name in claves:
+        return name
+    wanted = " ".join(name.casefold().split())
+    return next((key for key in claves if " ".join(key.casefold().split()) == wanted), None)
+
+
+def _load_profile_file(path: Path) -> SelectionProfile:
     data = yaml.safe_load(path.read_text()) if path.suffix.lower() in {".yaml", ".yml"} else json.loads(path.read_text())
     return SelectionProfile.model_validate(data)
 

@@ -17,44 +17,83 @@ def _text(node: ET.Element | None) -> str | None:
 
 
 def parse_logiqx_dat(path: Path) -> DatCatalog:
-    tree = ET.parse(path)
-    root = tree.getroot()
-    header = root.find("header")
-    catalog = DatCatalog(
-        name=_text(header.find("name")) if header is not None else None,
-        description=_text(header.find("description")) if header is not None else None,
-    )
+    """Lee un DAT XML (Logiqx/MAME) sin construir el árbol completo en memoria.
 
-    for game_node in [*root.findall("game"), *root.findall("machine")]:
-        game = DatGame(
-            name=game_node.attrib.get("name", ""),
-            dat_id=game_node.attrib.get("id") or None,
-            cloneof=game_node.attrib.get("cloneof") or None,
-            description=_text(game_node.find("description")),
-        )
-        cloneofid = game_node.attrib.get("cloneofid")
-        if cloneofid and not game.cloneof:
-            game.cloneof = cloneofid
-        for release in game_node.findall("release"):
-            region = release.attrib.get("region")
-            if region and region not in game.releases:
-                game.releases.append(region)
-        for rom_node in game_node.findall("rom"):
-            size_raw = rom_node.attrib.get("size")
-            game.roms.append(
-                DatRom(
-                    name=rom_node.attrib.get("name", ""),
-                    size=int(size_raw) if size_raw and size_raw.isdigit() else None,
-                    crc32=(rom_node.attrib.get("crc") or "").lower() or None,
-                    md5=(rom_node.attrib.get("md5") or "").lower() or None,
-                    sha1=(rom_node.attrib.get("sha1") or "").lower() or None,
-                    header=rom_node.attrib.get("header") or None,
-                )
-            )
-        _infer_releases(game)
-        catalog.games.append(game)
+    Los DAT de MAME pasan de 200 MB de XML y el árbol de ElementTree ocupa
+    varias veces eso; con `iterparse` se procesa juego a juego y se sueltan los
+    nodos ya leídos. Los juegos salen en el orden del archivo (antes se leían
+    primero todos los `game` y luego todos los `machine`, pero ningún DAT mezcla
+    ambas etiquetas).
+    """
+    _reject_internal_dtd(path)
+    catalog = DatCatalog()
+    context = ET.iterparse(path, events=("start", "end"))
+    _event, root = next(context)
+    for event, node in context:
+        if event != "end":
+            continue
+        if node.tag == "header":
+            catalog.name = _text(node.find("name"))
+            catalog.description = _text(node.find("description"))
+            node.clear()
+        elif node.tag in {"game", "machine"}:
+            catalog.games.append(_game_from_node(node))
+            node.clear()
+            # El raíz acumula los hijos ya procesados: sin esto, iterparse
+            # gasta tanta memoria como ET.parse.
+            root.clear()
     _resolve_cloneof_ids(catalog)
     return catalog
+
+
+def _game_from_node(game_node: ET.Element) -> DatGame:
+    game = DatGame(
+        name=game_node.attrib.get("name", ""),
+        dat_id=game_node.attrib.get("id") or None,
+        cloneof=game_node.attrib.get("cloneof") or None,
+        description=_text(game_node.find("description")),
+    )
+    cloneofid = game_node.attrib.get("cloneofid")
+    if cloneofid and not game.cloneof:
+        game.cloneof = cloneofid
+    for release in game_node.findall("release"):
+        region = release.attrib.get("region")
+        if region and region not in game.releases:
+            game.releases.append(region)
+    for rom_node in game_node.findall("rom"):
+        size_raw = rom_node.attrib.get("size")
+        game.roms.append(
+            DatRom(
+                name=rom_node.attrib.get("name", ""),
+                size=int(size_raw) if size_raw and size_raw.isdigit() else None,
+                crc32=(rom_node.attrib.get("crc") or "").lower() or None,
+                md5=(rom_node.attrib.get("md5") or "").lower() or None,
+                sha1=(rom_node.attrib.get("sha1") or "").lower() or None,
+                header=rom_node.attrib.get("header") or None,
+            )
+        )
+    _infer_releases(game)
+    return game
+
+
+# Bytes del prólogo que se revisan buscando declaraciones de entidades.
+PROLOGUE_BYTES = 64 * 1024
+_INTERNAL_DTD = re.compile(rb"<!DOCTYPE[^>\[]*\[|<!ENTITY", re.I)
+
+
+def _reject_internal_dtd(path: Path) -> None:
+    """Rechaza un DAT que declare entidades XML propias.
+
+    El DOCTYPE que traen los DAT de No-Intro apunta al DTD de Logiqx y es
+    inofensivo: ElementTree no va a buscarlo. Lo peligroso es el subconjunto
+    interno (`<!DOCTYPE ... [ <!ENTITY ...> ]>`), con el que se escribe un XML
+    diminuto que al expandirse agota la memoria. Ningún DAT legítimo lo
+    necesita y estos archivos se descargan de espejos públicos.
+    """
+    with path.open("rb") as fh:
+        prologue = fh.read(PROLOGUE_BYTES)
+    if _INTERNAL_DTD.search(prologue):
+        raise ValueError(f"El DAT {path.name} declara entidades XML propias; RetroPerfect no las procesa por seguridad.")
 
 
 def parse_clrmamepro_dat(path: Path) -> DatCatalog:
@@ -154,8 +193,13 @@ class DatIndex:
     def __init__(self, catalog: DatCatalog):
         self.catalog = catalog
         self.by_crc: dict[str, list[tuple[DatGame, int | None]]] = {}
-        self.by_md5: dict[str, DatGame] = {}
-        self.by_sha1: dict[str, DatGame] = {}
+        # Listas, no un juego por hash: dos entradas del DAT pueden declarar
+        # la misma ROM (clones de MAME, dumps idénticos de dos regiones) y
+        # guardar solo una hacía que ganara la ÚLTIMA del archivo, así que el
+        # juego con el que casaba un archivo dependía del orden del DAT. Ahora
+        # gana la primera, que en los DAT con parent/clone es la de referencia.
+        self.by_md5: dict[str, list[DatGame]] = {}
+        self.by_sha1: dict[str, list[DatGame]] = {}
         self.by_size: dict[int, list[DatGame]] = {}
         self.by_set_name: dict[str, DatGame] = {}
         self.by_track_sha1s: dict[tuple[str, ...], DatGame] = {}
@@ -175,9 +219,9 @@ class DatIndex:
                 if rom.crc32:
                     self.by_crc.setdefault(rom.crc32, []).append((game, rom.size))
                 if rom.md5:
-                    self.by_md5[rom.md5] = game
+                    self.by_md5.setdefault(rom.md5, []).append(game)
                 if rom.sha1:
-                    self.by_sha1[rom.sha1] = game
+                    self.by_sha1.setdefault(rom.sha1, []).append(game)
                 if rom.size is not None:
                     self.by_size.setdefault(rom.size, []).append(game)
                 header = _header_bytes(rom.header)
@@ -189,9 +233,9 @@ class DatIndex:
                     self.headered_candidates_by_name.setdefault(_name_key(rom.name), []).append((game, header))
 
     def match(self, crc32: str, md5: str, sha1: str, size: int) -> DatGame | None:
-        game = self.by_sha1.get(sha1.lower()) or self.by_md5.get(md5.lower())
-        if game:
-            return game
+        for games in (self.by_sha1.get(sha1.lower()), self.by_md5.get(md5.lower())):
+            if games:
+                return games[0]
         for candidate, rom_size in self.by_crc.get(crc32.lower(), []):
             if rom_size is None or rom_size == size:
                 return candidate
@@ -261,7 +305,10 @@ def dat_rom_for_hashes(game: DatGame, hashes) -> DatRom | None:
 
 
 def _infer_releases(game: DatGame) -> None:
-    candidates = [game.description or game.name, game.name, *[rom.name for rom in game.roms]]
+    # Sin repetidos: en la mayoría de los DAT la descripción es igual que el
+    # nombre, y el de la ROM solo añade la extensión, así que se parseaba tres
+    # veces lo mismo por juego.
+    candidates = dict.fromkeys([game.description or game.name, game.name, *[rom.name for rom in game.roms]])
     for candidate in candidates:
         metadata = parse_no_intro_name(candidate)
         for region in metadata.regions:

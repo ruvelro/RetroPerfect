@@ -16,6 +16,7 @@ from ..gui_rows import (
 )
 from ..gui_state import _current_platform, state
 from ..gui_widgets import _data_table
+from ..i18n import _
 
 
 def build(ctx: UiContext) -> None:
@@ -34,26 +35,26 @@ def build(ctx: UiContext) -> None:
         await action()
 
     with ui.tab_panel(ctx.summary_tab).classes("p-0"), ui.column().classes(_panel_class()):
-        ui.label("Cobertura del romset").classes("text-lg font-semibold")
-        coverage_status = ui.label("Escanea una colección con DAT para validar titulos contra el DAT. El plan decide despues que se conserva.").classes("text-sm text-gray-600")
+        ui.label(_("Cobertura del romset")).classes("text-lg font-semibold")
+        coverage_status = ui.label(_("Escanea una colección con DAT para validar titulos contra el DAT. El plan decide despues que se conserva.")).classes("text-sm text-gray-600")
         with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4 xl:grid-cols-8"):
-            audit_score = ui.label("Score: 0").classes("border border-gray-200 rounded-md p-3 text-center font-semibold")
-            audit_verdict = ui.label("Pendiente").classes("border border-gray-200 rounded-md p-3 text-center")
-            audit_complete = ui.label("Completos: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            audit_missing = ui.label("Perdidos: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            audit_duplicates = ui.label("Duplicados: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            audit_ra = ui.label("RA: 0 / 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            audit_ra_missing = ui.label("Sin RA: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            audit_patches = ui.label("Parches: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-        audit_notes = ui.label("La auditoría se calcula tras escanear y mejora al crear el plan.").classes("text-sm text-gray-600")
-        ui.label("Avisos de DAT / romset").classes("text-md font-semibold")
+            audit_score = ui.label(_("Score: 0")).classes("border border-gray-200 rounded-md p-3 text-center font-semibold")
+            audit_verdict = ui.label(_("Pendiente")).classes("border border-gray-200 rounded-md p-3 text-center")
+            audit_complete = ui.label(_("Completos: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            audit_missing = ui.label(_("Perdidos: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            audit_duplicates = ui.label(_("Duplicados: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            audit_ra = ui.label(_("RA: 0 / 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            audit_ra_missing = ui.label(_("Sin RA: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            audit_patches = ui.label(_("Parches: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+        audit_notes = ui.label(_("La auditoría se calcula tras escanear y mejora al crear el plan.")).classes("text-sm text-gray-600")
+        ui.label(_("Avisos de DAT / romset")).classes("text-md font-semibold")
         dat_warning_table = _data_table(
             card=False,
             columns=[
                 {"name": "status", "label": "", "field": "status", "align": "center"},
-                {"name": "item", "label": "Elemento", "field": "item", "sortable": True, "align": "left"},
-                {"name": "detail", "label": "Detalle", "field": "detail", "align": "left"},
-                {"name": "recommendation", "label": "Recomendación", "field": "recommendation", "align": "left"},
+                {"name": "item", "label": _("Elemento"), "field": "item", "sortable": True, "align": "left"},
+                {"name": "detail", "label": _("Detalle"), "field": "detail", "align": "left"},
+                {"name": "recommendation", "label": _("Recomendación"), "field": "recommendation", "align": "left"},
             ],
             rows=[],
             pagination=5,
@@ -69,48 +70,48 @@ def build(ctx: UiContext) -> None:
                 </q-td>
                 """,
         )
-        ui.label("Cola de parches RA").classes("text-md font-semibold")
+        ui.label(_("Cola de parches RA")).classes("text-md font-semibold")
         patch_queue_table = _data_table(
             card=False,
             columns=[
-                {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
-                {"name": "game", "label": "Juego/hash RA", "field": "game", "align": "left"},
-                {"name": "source", "label": "Base", "field": "source", "align": "left"},
-                {"name": "patch", "label": "PatchUrl", "field": "patch", "align": "left"},
-                {"name": "expected", "label": "MD5 final", "field": "expected", "align": "left"},
-                {"name": "destination", "label": "Destino", "field": "destination", "align": "left"},
+                {"name": "status", "label": _("Estado"), "field": "status", "sortable": True, "align": "center"},
+                {"name": "game", "label": _("Juego/hash RA"), "field": "game", "align": "left"},
+                {"name": "source", "label": _("Base"), "field": "source", "align": "left"},
+                {"name": "patch", "label": _("PatchUrl"), "field": "patch", "align": "left"},
+                {"name": "expected", "label": _("MD5 final"), "field": "expected", "align": "left"},
+                {"name": "destination", "label": _("Destino"), "field": "destination", "align": "left"},
             ],
             rows=[],
             pagination=5,
         )
         with ui.row().classes("items-center gap-2 text-sm"):
-            ui.badge("OK", color="green")
-            ui.label("Coincide con DAT / se guardara")
-            ui.badge("DROP", color="amber").props("text-color=black")
-            ui.label("Coincide, pero el perfil lo descarta")
-            ui.badge("MISS", color="red")
-            ui.label("Falta en DAT o romset")
+            ui.badge(_("OK"), color="green")
+            ui.label(_("Coincide con DAT / se guardara"))
+            ui.badge(_("DROP"), color="amber").props("text-color=black")
+            ui.label(_("Coincide, pero el perfil lo descarta"))
+            ui.badge(_("MISS"), color="red")
+            ui.label(_("Falta en DAT o romset"))
         with ui.row().classes("items-center gap-2 text-sm"):
-            ui.label("Reglas:")
-            ui.label("🎯 override")
-            ui.label("🏆 RA/sin RA")
-            ui.label("🏷️ tag")
-            ui.label("🌍 región")
-            ui.label("💬 idioma")
-            ui.label("🔢 revisión")
-            ui.label("✅ DAT")
+            ui.label(_("Reglas:"))
+            ui.label(_("🎯 override"))
+            ui.label(_("🏆 RA/sin RA"))
+            ui.label(_("🏷️ tag"))
+            ui.label(_("🌍 región"))
+            ui.label(_("💬 idioma"))
+            ui.label(_("🔢 revisión"))
+            ui.label(_("✅ DAT"))
         with ui.row().classes("items-center gap-2"):
-            ui.button("Crear/actualizar plan", icon="rule", on_click=run_summary_plan_click).props("color=primary")
-            ui.button("Aplicar plan revisado", icon="play_arrow", on_click=run_summary_apply_click).props("color=secondary outline")
+            ui.button(_("Crear/actualizar plan"), icon="rule", on_click=run_summary_plan_click).props("color=primary")
+            ui.button(_("Aplicar plan revisado"), icon="play_arrow", on_click=run_summary_apply_click).props("color=secondary outline")
         with ui.grid().classes("w-full gap-3 grid-cols-2 md:grid-cols-4 xl:grid-cols-8"):
-            metric_dat = ui.label("DAT: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            metric_rom = ui.label("Romset: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            metric_match = ui.label("Coinciden: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            metric_missing = ui.label("Faltan: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            metric_unmatched = ui.label("Fuera DAT: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            metric_hash = ui.label("Hash distinto: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            metric_keep = ui.label("Se guardan: 0").classes("border border-gray-200 rounded-md p-3 text-center")
-            metric_drop = ui.label("Se pierden: 0").classes("border border-gray-200 rounded-md p-3 text-center")
+            metric_dat = ui.label(_("DAT: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            metric_rom = ui.label(_("Romset: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            metric_match = ui.label(_("Coinciden: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            metric_missing = ui.label(_("Faltan: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            metric_unmatched = ui.label(_("Fuera DAT: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            metric_hash = ui.label(_("Hash distinto: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            metric_keep = ui.label(_("Se guardan: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
+            metric_drop = ui.label(_("Se pierden: 0")).classes("border border-gray-200 rounded-md p-3 text-center")
         coverage_filter = ui.select(
             {
                 "all": "Todos los juegos",
@@ -122,24 +123,24 @@ def build(ctx: UiContext) -> None:
                 "will_drop": "Se perderán con el perfil actual",
             },
             value="all",
-            label="Filtro",
+            label=_("Filtro"),
         ).props("outlined").classes("w-96")
         coverage_view = ui.select(
             {"grouped": "Agrupado por juego", "variants": "Separado por variante/archivo"},
             value="grouped",
-            label="Vista",
+            label=_("Vista"),
         ).props("outlined").classes("w-80")
         coverage_table = _data_table(
             columns=[
                 {"name": "visual", "label": "", "field": "visual", "align": "center"},
-                {"name": "title", "label": "Juego", "field": "title", "sortable": True, "align": "left"},
-                {"name": "ra", "label": "RA", "field": "ra", "sortable": True, "align": "center"},
-                {"name": "status", "label": "Estado", "field": "status", "sortable": True, "align": "center"},
-                {"name": "variants", "label": "Variantes", "field": "variants", "sortable": True, "align": "left"},
-                {"name": "dat_regions", "label": "DAT", "field": "dat_regions", "align": "center"},
-                {"name": "rom_regions", "label": "Romset", "field": "rom_regions", "align": "center"},
-                {"name": "keep", "label": "Salida", "field": "keep", "align": "center"},
-                {"name": "reason", "label": "Regla", "field": "reason", "align": "center"},
+                {"name": "title", "label": _("Juego"), "field": "title", "sortable": True, "align": "left"},
+                {"name": "ra", "label": _("RA"), "field": "ra", "sortable": True, "align": "center"},
+                {"name": "status", "label": _("Estado"), "field": "status", "sortable": True, "align": "center"},
+                {"name": "variants", "label": _("Variantes"), "field": "variants", "sortable": True, "align": "left"},
+                {"name": "dat_regions", "label": _("DAT"), "field": "dat_regions", "align": "center"},
+                {"name": "rom_regions", "label": _("Romset"), "field": "rom_regions", "align": "center"},
+                {"name": "keep", "label": _("Salida"), "field": "keep", "align": "center"},
+                {"name": "reason", "label": _("Regla"), "field": "reason", "align": "center"},
             ],
             rows=[],
             pagination=20,
@@ -203,7 +204,7 @@ def build(ctx: UiContext) -> None:
                 patch_queue_table.rows = []
                 patch_queue_table.update()
                 return
-            audit = build_perfect_audit(summary, state.scan, state.manifest)  # type: ignore[arg-type]
+            audit = build_perfect_audit(summary, state.scan, state.manifest)
             audit_score.text = f"Score: {audit.score}"
             audit_verdict.text = audit.verdict
             audit_complete.text = f"Completos: {audit.complete_games}"
@@ -218,7 +219,7 @@ def build(ctx: UiContext) -> None:
                     _current_platform(),
                     Path(ctx.source.value) if ctx.source.value else None,
                     Path(ctx.dat.value) if ctx.dat.value else None,
-                    state.scan,  # type: ignore[arg-type]
+                    state.scan,
                 )
             )
             dat_warning_table.update()
@@ -232,7 +233,7 @@ def build(ctx: UiContext) -> None:
             metric_hash.text = f"Hash distinto: {summary.hash_mismatch_games}"
             metric_keep.text = f"Se guardan: {summary.will_keep_games}"
             metric_drop.text = f"Se pierden: {summary.will_drop_all_games}"
-            coverage_status.text = "Los titulos se validan al terminar el escaneo. Al crear el plan, los colores reflejan que se conserva o descarta."
+            coverage_status.text = _("Los titulos se validan al terminar el escaneo. Al crear el plan, los colores reflejan que se conserva o descarta.")
             if coverage_view.value == "variants":
                 coverage_table.rows = _coverage_variant_rows(state.scan, state.catalog, state.manifest, coverage_filter.value)
             else:

@@ -112,11 +112,62 @@ def write_retroarch_playlist(scan: ScanResult, path: Path, manifest: Manifest | 
     return path
 
 
-def write_gamelist(scan: ScanResult, path: Path, manifest: Manifest | None = None) -> Path:
+def write_pegasus(scan: ScanResult, path: Path, manifest: Manifest | None = None, thumbnails_dir: Path | None = None) -> Path:
+    """`metadata.pegasus.txt` de Pegasus Frontend.
+
+    Pegasus es el frontend de muchas consolas portátiles caseras y no lee ni
+    `.lpl` ni `gamelist.xml`: usa un archivo de texto con una cabecera de la
+    colección y un bloque por juego. Como el resto de exportaciones, se escribe
+    con el nombre que dice el DAT y la ruta que deja el plan, en vez de dejar
+    que el frontend adivine.
+
+    El archivo se reescribe entero, al contrario que el `gamelist.xml`: aquí no
+    hay favoritos ni horas jugadas que perder, Pegasus los guarda aparte.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sistema = libretro_system(scan.platform)
+    playlists = _playlist_paths(manifest)
+    lineas = [
+        f"collection: {sistema}",
+        f"shortname: {platform_spec(scan.platform).id.value}",
+        f"extensions: {', '.join(suffix.lstrip('.') for suffix in platform_spec(scan.platform).rom_extensions)}",
+        "",
+    ]
+    vistos: set[str] = set()
+    for rom, destino in _exported_roms(scan, manifest):
+        ruta, etiqueta = destino, _label(rom)
+        if rom.metadata.part:
+            clave = f"{destino.parent}|{rom.metadata.title}"
+            if clave in playlists:
+                ruta, etiqueta = Path(playlists[clave]), rom.metadata.title
+        if str(ruta) in vistos:
+            continue
+        vistos.add(str(ruta))
+        lineas.append(f"game: {etiqueta}")
+        lineas.append(f"file: {_gamelist_path(ruta, path.parent)}")
+        metadata = parse_no_intro_name(rom.dat_game.name if rom.dat_game else ruta.name)
+        if metadata.regions:
+            lineas.append(f"x-region: {', '.join(metadata.regions)}")
+        if metadata.languages:
+            lineas.append(f"x-languages: {', '.join(metadata.languages)}")
+        caratula = _thumbnail_for(rom, thumbnails_dir)
+        if caratula is not None:
+            lineas.append(f"assets.boxFront: {_gamelist_path(caratula, path.parent)}")
+        lineas.append("")
+    path.write_text("\n".join(lineas).rstrip("\n") + "\n", encoding="utf-8")
+    return path
+
+
+def write_gamelist(scan: ScanResult, path: Path, manifest: Manifest | None = None, thumbnails_dir: Path | None = None) -> Path:
     """gamelist.xml de EmulationStation/Batocera, fusionando con el existente.
 
     Nunca se sobrescribe entero: ahí viven los favoritos y las horas jugadas del
     usuario, que no los pone RetroPerfect y no puede recuperarlos.
+
+    Con `thumbnails_dir` se enlaza la carátula de cada juego en `<image>`. El
+    comando `thumbnails` ya las descargaba y nadie las referenciaba, así que el
+    frontend las ignoraba y el usuario acababa dejando que re-escaneara con su
+    propia base de datos, que es justo lo que esto evita.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     raiz = _load_gamelist(path)
@@ -129,13 +180,20 @@ def write_gamelist(scan: ScanResult, path: Path, manifest: Manifest | None = Non
             clave = f"{destino.parent}|{rom.metadata.title}"
             if clave in playlists:
                 ruta, etiqueta = Path(playlists[clave]), rom.metadata.title
-        relativa = f"./{ruta.name}"
-        nodo = existentes.get(relativa)
+        relativa = _gamelist_path(ruta, path.parent)
+        nodo = existentes.get(relativa) or _nodo_plano(existentes, ruta.name)
         if nodo is None:
             nodo = ET.SubElement(raiz, "game")
             ET.SubElement(nodo, "path").text = relativa
-            existentes[relativa] = nodo
+        else:
+            # Puede venir de un gamelist que listaba el juego en la raíz: se
+            # reapunta en vez de añadir un segundo nodo para el mismo archivo.
+            _set_text(nodo, "path", relativa)
+        existentes[relativa] = nodo
         _set_text(nodo, "name", etiqueta)
+        caratula = _thumbnail_for(rom, thumbnails_dir)
+        if caratula is not None:
+            _set_text(nodo, "image", _gamelist_path(caratula, path.parent))
         metadata = parse_no_intro_name(rom.dat_game.name if rom.dat_game else ruta.name)
         if metadata.regions:
             _set_text(nodo, "region", metadata.regions[0])
@@ -145,6 +203,45 @@ def write_gamelist(scan: ScanResult, path: Path, manifest: Manifest | None = Non
     ET.indent(raiz, space="  ")
     path.write_text('<?xml version="1.0"?>\n' + ET.tostring(raiz, encoding="unicode") + "\n", encoding="utf-8")
     return path
+
+
+def _thumbnail_for(rom: ScannedRom, thumbnails_dir: Path | None) -> Path | None:
+    """Carátula descargada de este juego, si está.
+
+    Se busca por el nombre EXACTO del DAT con la misma sustitución de
+    caracteres que usa `thumbnails`: es lo que hace que el emparejamiento sea
+    exacto y no una aproximación.
+    """
+    if thumbnails_dir is None or rom.dat_game is None:
+        return None
+    from .thumbnails import KINDS, thumbnail_name
+
+    nombre = thumbnail_name(rom.dat_game.description or rom.dat_game.name)
+    for carpeta in KINDS.values():
+        candidata = thumbnails_dir / carpeta / f"{nombre}.png"
+        if candidata.is_file():
+            return candidata
+    return None
+
+
+def _gamelist_path(destino: Path, carpeta: Path) -> str:
+    """Ruta del juego tal y como la espera el gamelist: relativa a su carpeta.
+
+    El frontend resuelve `<path>` desde donde está el propio gamelist.xml, así
+    que escribir solo el nombre del archivo deja fuera la carpeta de la salida
+    organizada (`EUR/`, `USA/`...) y el juego no aparece. Si el destino cae en
+    otro árbol, la ruta absoluta es más fiable que una cadena de `../`.
+    """
+    try:
+        relativa = destino.resolve().relative_to(carpeta.resolve())
+    except (OSError, ValueError):
+        return str(destino)
+    return f"./{relativa.as_posix()}"
+
+
+def _nodo_plano(existentes: dict[str, ET.Element], nombre: str) -> ET.Element | None:
+    """Entrada que lista el archivo en la raíz, sin carpeta: `./Juego.bin`."""
+    return existentes.get(f"./{nombre}")
 
 
 def _load_gamelist(path: Path) -> ET.Element:

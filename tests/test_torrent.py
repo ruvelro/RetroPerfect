@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path
 
 import pytest
+import requests
 
 from retroperfect import rom_sources
 from retroperfect.dat import DatIndex, parse_logiqx_dat
@@ -14,7 +15,7 @@ from retroperfect.downloader import collect_downloads
 from retroperfect.models import OutputBucket, Platform, ProfileOutput, SelectionProfile
 from retroperfect.rom_sources import RomSource, resolve_source
 from retroperfect.torrent import TorrentError, read_torrent
-from retroperfect.torrent_client import PRIORITY_NORMAL, PRIORITY_SKIP, TorrentClientError, queue_plan, wanted_paths
+from retroperfect.torrent_client import PRIORITY_NORMAL, PRIORITY_SKIP, QBittorrentClient, TorrentClientError, queue_plan, wanted_paths
 
 PROFILE = SelectionProfile(name="test", outputs=[ProfileOutput(bucket=OutputBucket.MAIN, strict_1g1r=True, region_priority=["Europe", "USA", "Japan"])])
 
@@ -291,3 +292,199 @@ def test_wanted_paths_ignores_candidates_from_other_sources(isolated_config: Pat
 
     assert wanted_paths(plan, str(torrent)) == {"Metroid (Europe).nes"}
     assert wanted_paths(plan, "/otro/sitio.torrent") == set()
+
+
+# --- cliente HTTP de qBittorrent ---------------------------------------------
+
+
+class _RespuestaFalsa:
+    def __init__(self, text: str = "", status_code: int = 200, payload: object = None) -> None:
+        self.text = text
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self) -> object:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+
+class _SesionFalsa:
+    """Registra las peticiones y devuelve lo que se le diga, por ruta."""
+
+    def __init__(self, respuestas: dict[str, object] | None = None) -> None:
+        self.respuestas = respuestas or {}
+        self.peticiones: list[tuple[str, str, dict]] = []
+
+    def _responder(self, metodo: str, url: str, kwargs: dict) -> _RespuestaFalsa:
+        self.peticiones.append((metodo, url, kwargs))
+        for ruta, respuesta in self.respuestas.items():
+            if url.endswith(ruta):
+                if isinstance(respuesta, Exception):
+                    raise respuesta
+                return respuesta  # type: ignore[return-value]
+        return _RespuestaFalsa()
+
+    def post(self, url: str, **kwargs) -> _RespuestaFalsa:
+        return self._responder("POST", url, kwargs)
+
+    def get(self, url: str, **kwargs) -> _RespuestaFalsa:
+        return self._responder("GET", url, kwargs)
+
+
+def _cliente(respuestas: dict[str, object] | None = None, **kwargs) -> QBittorrentClient:
+    client = QBittorrentClient(**kwargs)
+    client.session = _SesionFalsa(respuestas)  # type: ignore[assignment]
+    return client
+
+
+def test_el_cliente_no_se_autentica_si_no_hay_credenciales(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Con la Web UI abierta en local no hacen falta, y pedirlas sobraría."""
+    monkeypatch.delenv("RETROPERFECT_QBT_USER", raising=False)
+    monkeypatch.delenv("RETROPERFECT_QBT_PASS", raising=False)
+    client = _cliente()
+
+    client.login()
+
+    assert client.session.peticiones == []  # type: ignore[attr-defined]
+
+
+def test_el_cliente_toma_las_credenciales_del_entorno(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No se guardan en ningún archivo: es la política del módulo."""
+    monkeypatch.setenv("RETROPERFECT_QBT_USER", "yo")
+    monkeypatch.setenv("RETROPERFECT_QBT_PASS", "secreto")
+    client = _cliente({"auth/login": _RespuestaFalsa(text="Ok.")})
+
+    client.login()
+
+    metodo, url, kwargs = client.session.peticiones[0]  # type: ignore[attr-defined]
+    assert (metodo, url) == ("POST", "http://127.0.0.1:8080/api/v2/auth/login")
+    assert kwargs["data"] == {"username": "yo", "password": "secreto"}
+
+
+def test_el_cliente_avisa_si_rechazan_las_credenciales() -> None:
+    client = _cliente({"auth/login": _RespuestaFalsa(text="Fails.")}, username="yo", password="mal")
+
+    with pytest.raises(TorrentClientError, match="rechazó las credenciales"):
+        client.login()
+
+
+def test_el_cliente_explica_un_403_en_vez_de_soltar_el_http() -> None:
+    client = _cliente({"torrents/filePrio": _RespuestaFalsa(status_code=403)})
+
+    with pytest.raises(TorrentClientError, match="¿Hace falta usuario y contraseña?"):
+        client.set_priorities("abc", [0], PRIORITY_SKIP)
+
+
+def test_el_cliente_explica_que_no_hay_nadie_escuchando() -> None:
+    client = _cliente({"app/version": requests.ConnectionError("rechazada")})
+
+    with pytest.raises(TorrentClientError, match="No se pudo contactar con qBittorrent"):
+        client.version()
+
+    client = _cliente({"torrents/add": requests.ConnectionError("rechazada")})
+    torrent = Path(__file__)
+    with pytest.raises(TorrentClientError, match="No se pudo contactar con qBittorrent"):
+        client.add_torrent(torrent)
+
+
+def test_el_cliente_normaliza_la_url_base() -> None:
+    client = _cliente({}, base_url="http://nas.local:9000/")
+
+    client.version()
+
+    _metodo, url, _kwargs = client.session.peticiones[0]  # type: ignore[attr-defined]
+    assert url == "http://nas.local:9000/api/v2/app/version"
+
+
+def test_anadir_un_torrent_lo_deja_en_pausa(tmp_path: Path) -> None:
+    """Hay que poder deseleccionar archivos ANTES de que empiece a bajar."""
+    torrent = tmp_path / "set.torrent"
+    torrent.write_bytes(b"d4:infod4:name3:Setee")
+    client = _cliente()
+
+    client.add_torrent(torrent, save_path="/descargas")
+
+    _metodo, url, kwargs = client.session.peticiones[0]  # type: ignore[attr-defined]
+    assert url.endswith("torrents/add")
+    assert kwargs["data"]["paused"] == "true"
+    assert kwargs["data"]["stopped"] == "true", "qBittorrent 5.x usa 'stopped'"
+    assert kwargs["data"]["savepath"] == "/descargas"
+    assert "torrents" in kwargs["files"]
+
+
+def test_no_se_mandan_prioridades_vacias() -> None:
+    client = _cliente()
+
+    client.set_priorities("abc", [], PRIORITY_SKIP)
+
+    assert client.session.peticiones == []  # type: ignore[attr-defined]
+
+
+def test_las_prioridades_van_en_una_sola_peticion() -> None:
+    client = _cliente()
+
+    client.set_priorities("abc", [0, 2, 5], PRIORITY_SKIP)
+
+    _metodo, _url, kwargs = client.session.peticiones[0]  # type: ignore[attr-defined]
+    assert kwargs["data"]["id"] == "0|2|5"
+    assert kwargs["data"]["priority"] == PRIORITY_SKIP
+
+
+def test_arrancar_prueba_los_dos_nombres_del_endpoint() -> None:
+    """`start` en qBittorrent 5.x, `resume` en 4.x."""
+    client = _cliente({"torrents/start": _RespuestaFalsa(status_code=404)})
+
+    client.start("abc")
+
+    rutas = [url.rsplit("/api/v2/", 1)[1] for _m, url, _k in client.session.peticiones]  # type: ignore[attr-defined]
+    assert rutas == ["torrents/start", "torrents/resume"]
+
+
+def test_si_ningun_endpoint_de_arranque_vale_se_dice() -> None:
+    client = _cliente({"torrents/start": _RespuestaFalsa(status_code=404), "torrents/resume": _RespuestaFalsa(status_code=404)})
+
+    with pytest.raises(TorrentClientError, match="No se pudo reanudar"):
+        client.start("abc")
+
+
+def test_la_lista_de_archivos_llega_como_lista() -> None:
+    client = _cliente({"torrents/files": _RespuestaFalsa(payload=[{"index": 0, "name": "Set/a.nes"}])})
+
+    assert client.files("abc") == [{"index": 0, "name": "Set/a.nes"}]
+
+
+def test_queue_avisa_si_qbittorrent_no_devuelve_los_archivos(isolated_config: Path, tmp_path: Path) -> None:
+    payload = b"METROID-ROM"
+    dat = _dat(tmp_path, {"Metroid (Europe)": payload})
+    torrent = _torrent(tmp_path, "Set", {"Metroid (Europe).nes": len(payload)})
+    plan = _plan_for(tmp_path, dat, torrent)
+
+    with pytest.raises(TorrentClientError, match="no devuelve su lista de archivos"):
+        queue_plan(plan, torrent, client=_FakeQBittorrent([]))  # type: ignore[arg-type]
+
+
+def test_queue_puede_dejar_el_torrent_sin_arrancar(isolated_config: Path, tmp_path: Path) -> None:
+    payload = b"METROID-ROM"
+    dat = _dat(tmp_path, {"Metroid (Europe)": payload})
+    torrent = _torrent(tmp_path, "Set", {"Metroid (Europe).nes": len(payload)})
+    plan = _plan_for(tmp_path, dat, torrent)
+    client = _FakeQBittorrent([{"index": 0, "name": "Set/Metroid (Europe).nes"}])
+
+    queue_plan(plan, torrent, client=client, start=False)  # type: ignore[arg-type]
+
+    assert client.added
+    assert not client.started
+
+
+def test_queue_tolera_un_torrent_de_un_solo_archivo_sin_carpeta(isolated_config: Path, tmp_path: Path) -> None:
+    """En los de un archivo qBittorrent no antepone la carpeta del torrent."""
+    payload = b"METROID-ROM"
+    dat = _dat(tmp_path, {"Metroid (Europe)": payload})
+    torrent = _torrent(tmp_path, "Set", {"Metroid (Europe).nes": len(payload)})
+    plan = _plan_for(tmp_path, dat, torrent)
+    client = _FakeQBittorrent([{"index": 0, "name": "Metroid (Europe).nes"}])
+
+    assert queue_plan(plan, torrent, client=client) == {"seleccionados": 1, "descartados": 0}  # type: ignore[arg-type]

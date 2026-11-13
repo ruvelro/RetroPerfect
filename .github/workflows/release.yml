@@ -30,7 +30,8 @@ jobs:
       - name: Comprobar que el tag coincide con la versión del paquete
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          # La versión vive en src/retroperfect/__init__.py; pyproject la lee de ahí.
+          version=$(python -c "import sys; sys.path.insert(0, 'src'); import retroperfect; print(retroperfect.__version__)")
           if [ "$tag" != "$version" ]; then
             echo "El tag v$tag no coincide con la versión $version de pyproject.toml" >&2
             exit 1

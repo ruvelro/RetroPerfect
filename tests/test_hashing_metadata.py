@@ -138,3 +138,64 @@ def test_arcade_ra_hash_is_set_name_md5(tmp_path) -> None:
     assert len(scan.roms) == 1
     assert scan.roms[0].hashes.ra_hash == arcade_ra_md5("sfa3")
     assert scan.roms[0].hashes.ra_hash == hashlib.md5(b"sfa3").hexdigest()
+
+
+def test_se_reconocen_las_regiones_de_los_catalogos_completos() -> None:
+    """Una región sin reconocer no es cosmética: deja la ROM como "región
+    desconocida" y la hace perder el 1G1R sin motivo visible."""
+    from retroperfect.metadata import parse_no_intro_name
+
+    esperado = {
+        "Juego (Korea).zip": ["Korea"],
+        "Juego (Denmark).zip": ["Denmark"],
+        "Juego (Norway).zip": ["Norway"],
+        "Juego (Finland).zip": ["Finland"],
+        "Juego (Portugal).zip": ["Portugal"],
+        "Juego (Russia).zip": ["Russia"],
+        "Juego (Poland).zip": ["Poland"],
+        "Juego (Latin America).zip": ["Latin America"],
+        "Juego (UK).zip": ["UK"],
+        "Juego (Canada).zip": ["Canada"],
+    }
+    for nombre, regiones in esperado.items():
+        assert parse_no_intro_name(nombre).regions == regiones, nombre
+
+
+def test_las_regiones_que_usa_la_curacion_son_todas_detectables() -> None:
+    """EUROPEAN_REGIONS y REGION_FOLDERS decidían carpeta y prioridad con
+    regiones que el parser no podía producir, así que eran código muerto."""
+    from retroperfect.metadata import REGION_ALIASES
+    from retroperfect.rules import EUROPEAN_REGIONS, REGION_FOLDERS
+
+    detectables = set(REGION_ALIASES.values())
+    assert (EUROPEAN_REGIONS | set(REGION_FOLDERS)) <= detectables
+
+
+def test_multi5_y_sus_variantes_cuentan_como_multiidioma() -> None:
+    from retroperfect.metadata import parse_no_intro_name
+
+    for nombre in ["Juego (Europe) (Multi5).zip", "Juego (Europe) (Multi 3).zip", "Juego (Europe) (M5).zip"]:
+        assert parse_no_intro_name(nombre).languages == ["Multi"], nombre
+
+
+def test_dos_idiomas_cualesquiera_marcan_multiidioma() -> None:
+    """La regla contaba una lista de códigos escrita a mano, así que una
+    edición en español y catalán se quedaba sin marcar."""
+    from retroperfect.metadata import parse_no_intro_name
+
+    assert parse_no_intro_name("Juego (Spain) (Es,Ca).zip").languages == ["Spanish", "Catalan", "Multi"]
+    assert parse_no_intro_name("Juego (Europe) (En,Fr,De).zip").languages == ["English", "French", "German", "Multi"]
+    assert parse_no_intro_name("Juego (Europe) (En).zip").languages == ["English"]
+
+
+def test_el_filtro_previo_de_etiquetas_no_cambia_lo_que_se_detecta() -> None:
+    """El bucle de 28 expresiones por nombre dominaba la carga de un DAT, pero
+    un nombre puede llevar varias etiquetas y unas contienen a otras."""
+    from retroperfect.metadata import parse_no_intro_name
+
+    assert parse_no_intro_name("Juego (Europe).zip").tags == []
+    assert parse_no_intro_name("Juego (Europe) (Beta).zip").tags == ["Beta"]
+    sueltas = parse_no_intro_name("Juego (Hack, Translation).zip").tags
+    assert set(sueltas) == {"Hack", "Translation"}
+    solapadas = parse_no_intro_name("Juego (Nintendo Switch Online).zip").tags
+    assert "Nintendo Switch Online" in solapadas and "Switch Online" in solapadas

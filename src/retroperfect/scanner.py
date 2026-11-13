@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import uuid
 import zipfile
 from collections.abc import Callable, Iterator
@@ -13,7 +15,7 @@ from py7zr.io import BytesIOFactory
 
 from .chd import chd_track_sha1s
 from .dat import DatIndex
-from .disc import disc_ra_md5
+from .disc import DISC_RA_MODES, disc_ra_md5
 from .hashing import HEADER_HASH_MODES, arcade_ra_md5, hash_bytes, hash_stream
 from .metadata import parse_no_intro_name
 from .models import Platform, RomHash, ScannedRom, ScanResult
@@ -21,6 +23,7 @@ from .platforms import platform_spec
 from .scan_cache import ScanHashCache
 
 ProgressCallback = Callable[[dict[str, object]], None]
+CancelCheck = Callable[[], bool]
 
 # Contenedores admitidos para cualquier plataforma, aunque el spec no los liste.
 CONTAINER_SUFFIXES = {".zip", ".7z"}
@@ -33,9 +36,56 @@ STREAM_THRESHOLD_BYTES = 64 * 1024 * 1024
 # Tamaño máximo declarado de una entrada 7z que se extrae a memoria.
 MAX_7Z_ENTRY_BYTES = 4 * 1024 * 1024 * 1024
 
+# Presupuesto de memoria por tanda de extracción 7z. El límite por entrada no
+# acota el total, y py7zr no sabe leer en streaming: hay que trocear.
+MAX_7Z_BATCH_BYTES = 512 * 1024 * 1024
+
 
 def _should_stream(platform: Platform, size: int) -> bool:
     return platform_spec(platform).hash_mode not in HEADER_HASH_MODES and size >= STREAM_THRESHOLD_BYTES
+
+
+# Imágenes de disco que se sostienen solas dentro de un contenedor. Un .cue o
+# un .gdi solo describen el layout y apuntan a archivos hermanos, que al estar
+# comprimidos no existen como rutas: de esos no se puede sacar el hash.
+CONTAINED_DISC_SUFFIXES = {".iso", ".bin", ".chd"}
+
+
+def _dump_bytes(data: bytes, destination: Path) -> None:
+    destination.write_bytes(data)
+
+
+def _dump_zip_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo, destination: Path) -> None:
+    with archive.open(info) as source, destination.open("wb") as target:
+        shutil.copyfileobj(source, target)
+
+
+def _dump_7z_entry(path: Path, inner: str, size: int, destination: Path) -> None:
+    destination.write_bytes(_read_single_7z_entry(path, inner, size))
+
+
+def _contained_disc_ra_md5(platform: Platform, filename: str, dump: Callable[[Path], None]) -> str | None:
+    """Hash RA de una imagen de disco que viene dentro de un ZIP o un 7z.
+
+    El hash de RetroAchievements de un disco se calcula leyendo sectores
+    concretos (SYSTEM.CNF, el ejecutable, la cabecera), así que necesita acceso
+    aleatorio a un archivo: la entrada se vuelca a un temporal del sistema, se
+    lee y se borra. Sin esto, cualquier imagen de disco comprimida se quedaba
+    sin hash RA y se marcaba como incompatible con logros aunque no lo fuera.
+    """
+    mode = platform_spec(platform).hash_mode
+    if mode not in DISC_RA_MODES or Path(filename).suffix.lower() not in CONTAINED_DISC_SUFFIXES:
+        return None
+    handle, name = tempfile.mkstemp(suffix=Path(filename).suffix)
+    os.close(handle)
+    temporal = Path(name)
+    try:
+        dump(temporal)
+        return disc_ra_md5(temporal, mode)
+    except OSError:
+        return None
+    finally:
+        temporal.unlink(missing_ok=True)
 
 
 def _read_7z_entries(archive: py7zr.SevenZipFile, targets: list[str], largest: int) -> dict:
@@ -168,6 +218,10 @@ def _scan_zip(path: Path, platform: Platform, rom_extensions: set[str], dat_inde
         for info in rom_entries:
             cached = cache.get(str(path), info.filename, platform, info.file_size, stat.st_mtime_ns) if cache else None
             if cached is not None:
+                if cached.ra_md5 is None:
+                    cached.ra_md5 = _contained_disc_ra_md5(platform, info.filename, partial(_dump_zip_entry, archive, info))
+                    if cache and cached.ra_md5 is not None:
+                        cache.put(str(path), info.filename, platform, info.file_size, stat.st_mtime_ns, cached)
                 rom = _scan_payload(
                     hashes=cached,
                     data_loader=partial(archive.read, info),
@@ -180,12 +234,16 @@ def _scan_zip(path: Path, platform: Platform, rom_extensions: set[str], dat_inde
             elif _should_stream(platform, info.file_size):
                 with archive.open(info) as fh:
                     hashes = hash_stream(fh)
+                if hashes.ra_md5 is None:
+                    hashes.ra_md5 = _contained_disc_ra_md5(platform, info.filename, partial(_dump_zip_entry, archive, info))
                 if cache:
                     cache.put(str(path), info.filename, platform, info.file_size, stat.st_mtime_ns, hashes)
                 rom = _scan_payload(hashes=hashes, source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
             else:
                 data = archive.read(info)
                 hashes = hash_bytes(data, platform)
+                if hashes.ra_md5 is None:
+                    hashes.ra_md5 = _contained_disc_ra_md5(platform, info.filename, partial(_dump_bytes, data))
                 if cache:
                     cache.put(str(path), info.filename, platform, info.file_size, stat.st_mtime_ns, hashes)
                 rom = _scan_payload(data=data, hashes=hashes, source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
@@ -213,19 +271,18 @@ def _scan_7z(path: Path, platform: Platform, rom_extensions: set[str], dat_index
         if not entries:
             return roms, skipped
         pending = []
-        cached_hashes: dict[str, RomHash] = {}
+        por_entrada: dict[str, ScannedRom] = {}
         for info in entries:
             cached = cache.get(str(path), info.filename, platform, info.uncompressed, stat.st_mtime_ns) if cache else None
-            if cached is not None:
-                cached_hashes[info.filename] = cached
-            else:
+            if cached is None:
                 pending.append(info)
-        data_map = _read_7z_entries(archive, [info.filename for info in pending], max((info.uncompressed for info in pending), default=1)) if pending else {}
-    for info in entries:
-        cached_hit = cached_hashes.get(info.filename)
-        if cached_hit is not None:
-            rom = _scan_payload(
-                hashes=cached_hit,
+                continue
+            if cached.ra_md5 is None:
+                cached.ra_md5 = _contained_disc_ra_md5(platform, info.filename, partial(_dump_7z_entry, path, info.filename, info.uncompressed))
+                if cache and cached.ra_md5 is not None:
+                    cache.put(str(path), info.filename, platform, info.uncompressed, stat.st_mtime_ns, cached)
+            por_entrada[info.filename] = _scan_payload(
+                hashes=cached,
                 data_loader=partial(_read_single_7z_entry, path, info.filename, info.uncompressed),
                 source_path=path,
                 container_path=path,
@@ -233,17 +290,47 @@ def _scan_7z(path: Path, platform: Platform, rom_extensions: set[str], dat_index
                 platform=platform,
                 dat_index=dat_index,
             )
-        else:
-            buffer = data_map.get(info.filename)
-            if buffer is None:
-                continue
-            data = buffer.read()
-            hashes = hash_bytes(data, platform)
-            if cache:
-                cache.put(str(path), info.filename, platform, info.uncompressed, stat.st_mtime_ns, hashes)
-            rom = _scan_payload(data=data, hashes=hashes, source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index)
-        roms.append(rom)
+        # Por tandas: el límite por entrada no acota el total, así que un 7z con
+        # dos mil entradas de 2 MB se traía 4 GB a memoria de una vez.
+        for index, batch in enumerate(_7z_batches(pending, MAX_7Z_BATCH_BYTES)):
+            if index:
+                archive.reset()  # py7zr no permite dos extracciones sin rebobinar
+            data_map = _read_7z_entries(archive, [item.filename for item in batch], max(item.uncompressed for item in batch))
+            for info in batch:
+                buffer = data_map.get(info.filename)
+                if buffer is None:
+                    continue
+                data = buffer.read()
+                hashes = hash_bytes(data, platform)
+                if hashes.ra_md5 is None:
+                    hashes.ra_md5 = _contained_disc_ra_md5(platform, info.filename, partial(_dump_bytes, data))
+                if cache:
+                    cache.put(str(path), info.filename, platform, info.uncompressed, stat.st_mtime_ns, hashes)
+                por_entrada[info.filename] = _scan_payload(
+                    data=data, hashes=hashes, source_path=path, container_path=path, inner_path=info.filename, platform=platform, dat_index=dat_index
+                )
+            data_map.clear()
+    # En el orden del archivo, que es el que ve quien mira el resultado.
+    roms.extend(por_entrada[info.filename] for info in entries if info.filename in por_entrada)
     return roms, skipped
+
+
+def _7z_batches(entries: list, limit: int) -> Iterator[list]:
+    """Agrupa entradas para no pasar de `limit` bytes descomprimidos por tanda.
+
+    Una entrada que por sí sola pase del límite va en su propia tanda: ya la
+    acota MAX_7Z_ENTRY_BYTES, y partirla no se puede.
+    """
+    batch: list = []
+    total = 0
+    for info in entries:
+        if batch and total + info.uncompressed > limit:
+            yield batch
+            batch, total = [], 0
+        batch.append(info)
+        total += info.uncompressed
+    if batch:
+        yield batch
 
 
 def _scan_one_path(
@@ -295,7 +382,15 @@ def scan_directory(
     progress: ProgressCallback | None = None,
     hash_cache: Path | None = None,
     workers: int | None = None,
+    cancelled: CancelCheck | None = None,
 ) -> ScanResult:
+    """Escanea una carpeta y devuelve lo identificado.
+
+    `cancelled` se consulta entre archivos: un escaneo de cientos de GB tenía
+    que terminar o cerrarse la aplicación entera. Lo ya escaneado se devuelve
+    igual, y la fase del progreso acaba en "cancelled" para que quien llame
+    sepa que la lista está incompleta.
+    """
     result = ScanResult(id=str(uuid.uuid4()), platform=platform, input_path=str(input_path), dat_path=str(dat_path) if dat_path else None)
     spec = platform_spec(platform)
     supported_extensions = set(spec.extensions)
@@ -325,10 +420,20 @@ def scan_directory(
         if workers > 1 and len(paths) > 1:
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = [pool.submit(scan_one, path) for path in paths]
-                for path, future in zip(paths, futures, strict=True):
-                    yield path, future.result()
+                try:
+                    for path, future in zip(paths, futures, strict=True):
+                        if cancelled and cancelled():
+                            return
+                        yield path, future.result()
+                finally:
+                    # Las que aún no han empezado se descartan; las que están a
+                    # medio hashear terminan solas al cerrar el pool.
+                    for pending in futures:
+                        pending.cancel()
         else:
             for path in paths:
+                if cancelled and cancelled():
+                    return
                 yield path, scan_one(path)
 
     try:
@@ -353,7 +458,7 @@ def scan_directory(
     if progress:
         progress(
             {
-                "phase": "done",
+                "phase": "cancelled" if cancelled and cancelled() else "done",
                 "current": total,
                 "total": total,
                 "path": "",

@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .metadata import parse_no_intro_name, with_part
 from .models import DatCatalog, DatGame, DetectedMetadata, OutputBucket, Platform, ProfileOutput, ScanResult, SelectionProfile
@@ -51,6 +51,22 @@ class DownloadCandidate(BaseModel):
     @property
     def confidence_label(self) -> str:
         return CONFIDENCE_LABELS.get(self.confidence, self.confidence)
+
+    @field_validator("file_name")
+    @classmethod
+    def _solo_el_nombre(cls, value: str) -> str:
+        """El nombre con el que el archivo aterriza en el romset, sin carpetas.
+
+        Sale del índice de una fuente que pone el usuario —los metadatos de
+        archive.org o la lista de archivos de un .torrent pueden traer rutas—, y
+        se usa para construir la ruta de destino: un `..` escribiría fuera del
+        romset. Se queda solo la última parte, que es lo que se quiere en una
+        carpeta de ROMs.
+        """
+        name = PurePosixPath(value.replace("\\", "/")).name
+        if not name or name in {".", ".."}:
+            raise ValueError(f"Nombre de archivo remoto no utilizable: {value!r}")
+        return name
 
 
 class MissingGame(BaseModel):

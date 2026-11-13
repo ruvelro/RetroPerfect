@@ -666,3 +666,93 @@ def test_index_cache_is_invalidated_when_the_source_moves(isolated_config: Path,
     assert [f.name for f in resolve_source(RomSource(id="espejo", label="E", kind="local_dir", location=str(first))).files] == ["Uno.nes"]
     moved = RomSource(id="espejo", label="E", kind="local_dir", location=str(second))
     assert [f.name for f in resolve_source(moved).files] == ["Dos.nes"]
+
+
+def test_un_nombre_remoto_con_ruta_no_escribe_fuera_del_romset() -> None:
+    """El nombre sale del índice de una fuente que pone el usuario: los
+    metadatos de archive.org y la lista de un .torrent pueden traer rutas."""
+    from retroperfect.download_plan import DownloadCandidate
+
+    candidato = DownloadCandidate(
+        group_key="g", game_name="Juego", title="Juego", source_id="s",
+        file_name="../../../etc/Juego.nes", url="https://ejemplo.org/j",
+    )
+
+    assert candidato.file_name == "Juego.nes"
+    assert DownloadCandidate(group_key="g", game_name="J", title="J", source_id="s", file_name="sub\\carpeta\\J.nes", url="u").file_name == "J.nes"
+    with pytest.raises(ValueError):
+        DownloadCandidate(group_key="g", game_name="J", title="J", source_id="s", file_name="../", url="u")
+
+
+def test_torrent_collect_no_lee_fuera_de_la_carpeta_de_descargas(tmp_path: Path) -> None:
+    """`inner_path` también viene del .torrent: un `..` apuntaría fuera."""
+    from retroperfect.download_plan import DownloadCandidate
+    from retroperfect.downloader import _locate_download
+
+    descargas = tmp_path / "descargas"
+    descargas.mkdir()
+    (tmp_path / "ajeno.nes").write_bytes(b"ARCHIVO DE FUERA")
+    candidato = DownloadCandidate(
+        group_key="g", game_name="Juego", title="Juego", source_id="s",
+        file_name="ajeno.nes", url="u", inner_path="../ajeno.nes",
+    )
+
+    assert _locate_download(descargas, candidato) is None
+
+
+def test_la_descarga_comprueba_el_espacio_antes_de_empezar(tmp_path: Path, monkeypatch) -> None:
+    """`apply` ya comprobaba el espacio; quedarse sin disco a mitad de una
+    descarga deja archivos truncados y un romset incompleto."""
+    import shutil as shutil_module
+
+    from retroperfect.download_plan import DownloadCandidate, DownloadPlan
+    from retroperfect.downloader import run_download_plan
+
+    plan = DownloadPlan(
+        platform=Platform.NES,
+        candidates=[
+            DownloadCandidate(group_key="g", game_name="Juego", title="Juego", source_id="s", file_name="Juego.nes", url="https://ejemplo.org/j", size=5_000_000)
+        ],
+    )
+    monkeypatch.setattr(shutil_module, "disk_usage", lambda _path: shutil_module._ntuple_diskusage(10_000_000, 9_000_000, 1_000_000))
+
+    with pytest.raises(RuntimeError, match="No hay espacio"):
+        run_download_plan(plan, tmp_path / "romset", state_base=tmp_path)
+
+
+def test_la_descarga_avisa_de_los_tamanos_desconocidos_al_quedarse_sin_sitio(tmp_path: Path, monkeypatch) -> None:
+    import shutil as shutil_module
+
+    from retroperfect.download_plan import DownloadCandidate, DownloadPlan
+    from retroperfect.downloader import run_download_plan
+
+    plan = DownloadPlan(
+        platform=Platform.NES,
+        candidates=[
+            DownloadCandidate(group_key="g", game_name="A", title="A", source_id="s", file_name="A.nes", url="u", size=5_000_000),
+            DownloadCandidate(group_key="h", game_name="B", title="B", source_id="s", file_name="B.nes", url="u"),
+        ],
+    )
+    monkeypatch.setattr(shutil_module, "disk_usage", lambda _path: shutil_module._ntuple_diskusage(10, 9, 1))
+
+    with pytest.raises(RuntimeError, match="tamaño desconocido"):
+        run_download_plan(plan, tmp_path / "romset", state_base=tmp_path)
+
+
+def test_una_descarga_que_cabe_no_se_bloquea(tmp_path: Path, monkeypatch) -> None:
+    import shutil as shutil_module
+
+    from retroperfect.download_plan import DownloadCandidate, DownloadPlan
+    from retroperfect.downloader import run_download_plan
+
+    origen = tmp_path / "origen.nes"
+    origen.write_bytes(b"ROM")
+    plan = DownloadPlan(
+        platform=Platform.NES,
+        candidates=[DownloadCandidate(group_key="g", game_name="Juego", title="Juego", source_id="s", file_name="Juego.nes", url=str(origen), size=3)],
+    )
+    monkeypatch.setattr(shutil_module, "disk_usage", lambda _path: shutil_module._ntuple_diskusage(10**9, 0, 10**9))
+
+    report = run_download_plan(plan, tmp_path / "romset", state_base=tmp_path)
+
+    assert report.downloaded == 1

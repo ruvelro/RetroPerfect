@@ -86,3 +86,21 @@ def test_busy_anidado_cuenta_las_veces_y_no_se_libera_antes_de_tiempo() -> None:
             assert state.busy_operations == {"descarga": 2}
         assert state.busy_operations == {"descarga": 1}
     assert state.busy_operations == {}
+
+
+def test_las_tablas_grandes_se_recortan_y_lo_dicen() -> None:
+    """Las tablas paginan en el cliente, así que TODAS las filas viajan por el
+    websocket aunque solo se vean quince. Recortar en silencio sería peor que
+    ir lento: el usuario tiene que saber que no está viendo la lista completa."""
+    from retroperfect.gui_widgets import MAX_FILAS_TABLA, _limitar_filas
+
+    pocas = [{"a": str(i)} for i in range(10)]
+    filas, aviso = _limitar_filas(pocas)
+    assert filas == pocas
+    assert aviso == ""
+
+    muchas = [{"a": str(i)} for i in range(MAX_FILAS_TABLA + 500)]
+    filas, aviso = _limitar_filas(muchas)
+    assert len(filas) == MAX_FILAS_TABLA
+    assert filas == muchas[:MAX_FILAS_TABLA], "se recorta por el final, no se reordena"
+    assert str(MAX_FILAS_TABLA) in aviso and str(len(muchas)) in aviso

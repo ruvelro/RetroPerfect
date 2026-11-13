@@ -115,3 +115,149 @@ def test_parallel_scan_matches_sequential_results(tmp_path: Path) -> None:
     assert key(sequential) == key(parallel)
     assert len(parallel.roms) == 16
     assert sequential.unmatched_files == parallel.unmatched_files
+
+
+def test_una_cache_de_otra_version_se_descarta_entera(tmp_path: Path) -> None:
+    """Servir hashes que ya no significan lo mismo es peor que re-hashear."""
+    import sqlite3
+
+    from retroperfect.models import RomHash
+    from retroperfect.scan_cache import CACHE_SCHEMA_VERSION, ScanHashCache
+
+    ruta = tmp_path / "cache.sqlite3"
+    cache = ScanHashCache(ruta)
+    cache.put("/roms/a.nes", None, Platform.NES, 10, 1, RomHash(crc32="a", md5="b", sha1="c", size=10))
+    cache.close()
+    with sqlite3.connect(ruta) as conn:
+        conn.execute(f"PRAGMA user_version = {CACHE_SCHEMA_VERSION + 1}")
+
+    reabierta = ScanHashCache(ruta)
+    try:
+        assert reabierta.get("/roms/a.nes", None, Platform.NES, 10, 1) is None
+        assert int(reabierta.conn.execute("PRAGMA user_version").fetchone()[0]) == CACHE_SCHEMA_VERSION
+    finally:
+        reabierta.close()
+
+
+def test_una_entrada_ilegible_se_recalcula_en_vez_de_romper_el_escaneo(tmp_path: Path) -> None:
+    from retroperfect.models import RomHash
+    from retroperfect.scan_cache import ScanHashCache
+
+    cache = ScanHashCache(tmp_path / "cache.sqlite3")
+    try:
+        cache.put("/roms/a.nes", None, Platform.NES, 10, 1, RomHash(crc32="a", md5="b", sha1="c", size=10))
+        cache.conn.execute("UPDATE file_hashes SET hashes = 'esto no es json'")
+
+        assert cache.get("/roms/a.nes", None, Platform.NES, 10, 1) is None
+    finally:
+        cache.close()
+
+
+def test_el_escaneo_se_puede_cancelar_entre_archivos(tmp_path: Path) -> None:
+    """Un escaneo de cientos de GB tenía que terminar o cerrarse la app entera."""
+    for i in range(20):
+        (tmp_path / f"Juego {i} (Europe).nes").write_bytes(f"ROM{i}".encode())
+    vistos: list[int] = []
+
+    def cancelar_tras_tres() -> bool:
+        vistos.append(1)
+        return len(vistos) > 3
+
+    fases: list[str] = []
+    scan = scanner.scan_directory(
+        tmp_path,
+        Platform.NES,
+        progress=lambda update: fases.append(str(update["phase"])),
+        cancelled=cancelar_tras_tres,
+        workers=2,
+    )
+
+    assert 0 < len(scan.roms) < 20, f"ni se cortó ni escaneó todo: {len(scan.roms)}"
+    assert fases[-1] == "cancelled", "quien llama tiene que saber que la lista está incompleta"
+
+
+def test_un_escaneo_sin_cancelar_termina_en_done(tmp_path: Path) -> None:
+    for i in range(3):
+        (tmp_path / f"Juego {i} (Europe).nes").write_bytes(f"ROM{i}".encode())
+    fases: list[str] = []
+
+    scan = scanner.scan_directory(tmp_path, Platform.NES, progress=lambda update: fases.append(str(update["phase"])))
+
+    assert len(scan.roms) == 3
+    assert fases[-1] == "done"
+
+
+def test_la_cache_se_exporta_y_se_vuelve_a_importar(tmp_path: Path) -> None:
+    """Re-escanear cientos de GB cuesta horas: la caché tiene que poder salvarse."""
+    from retroperfect.models import RomHash
+    from retroperfect.scan_cache import ScanHashCache
+
+    rom = tmp_path / "Juego (Europe).nes"
+    rom.write_bytes(b"ROM")
+    stat = rom.stat()
+    origen = ScanHashCache(tmp_path / "a.sqlite3")
+    hashes = RomHash(crc32="aabbccdd", md5="0" * 32, sha1="1" * 40, size=stat.st_size)
+    origen.put(str(rom), None, Platform.NES, stat.st_size, stat.st_mtime_ns, hashes)
+    filas = origen.export_rows()
+    origen.close()
+
+    destino = ScanHashCache(tmp_path / "b.sqlite3")
+    try:
+        assert destino.import_rows(filas) == 1
+        assert destino.get(str(rom), None, Platform.NES, stat.st_size, stat.st_mtime_ns) == hashes
+        assert destino.usable_rows() == 1
+    finally:
+        destino.close()
+
+
+def test_una_coleccion_que_cambia_de_sitio_reutiliza_la_cache(tmp_path: Path) -> None:
+    """Mover dentro del mismo sistema de archivos conserva el mtime, así que la
+    caché sigue valiendo si se reapuntan las rutas."""
+    from retroperfect.models import RomHash
+    from retroperfect.scan_cache import ScanHashCache
+
+    vieja = tmp_path / "volumen-viejo"
+    nueva = tmp_path / "volumen-nuevo"
+    vieja.mkdir()
+    nueva.mkdir()
+    rom = nueva / "Juego (Europe).nes"
+    rom.write_bytes(b"ROM")
+    stat = rom.stat()
+
+    cache = ScanHashCache(tmp_path / "cache.sqlite3")
+    try:
+        filas = [
+            {
+                "container": str(vieja / "Juego (Europe).nes"),
+                "inner": "",
+                "platform": Platform.NES.value,
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "hashes": RomHash(crc32="a", md5="0" * 32, sha1="1" * 40, size=stat.st_size).model_dump_json(),
+            }
+        ]
+
+        assert cache.import_rows(filas) == 1
+        assert cache.usable_rows() == 0, "con la ruta vieja no sirve de nada"
+
+        assert cache.import_rows(filas, rebase=(str(vieja), str(nueva))) == 1
+        assert cache.usable_rows() == 1
+        assert cache.get(str(rom), None, Platform.NES, stat.st_size, stat.st_mtime_ns) is not None
+    finally:
+        cache.close()
+
+
+def test_vaciar_la_cache_dice_cuantas_entradas_habia(tmp_path: Path) -> None:
+    from retroperfect.models import RomHash
+    from retroperfect.scan_cache import ScanHashCache
+
+    cache = ScanHashCache(tmp_path / "cache.sqlite3")
+    try:
+        for indice in range(3):
+            cache.put(f"/roms/{indice}.nes", None, Platform.NES, 10, 1, RomHash(crc32="a", md5="b", sha1="c", size=10))
+
+        assert cache.count() == 3
+        assert cache.clear() == 3
+        assert cache.count() == 0
+    finally:
+        cache.close()

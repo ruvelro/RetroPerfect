@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import py7zr
@@ -50,3 +51,51 @@ def test_scan_skips_oversized_7z_entries(tmp_path: Path, monkeypatch) -> None:
     assert scan.roms[0].inner_path == "Pequeno (USA).nes"
     assert len(scan.unmatched_files) == 1
     assert "límite de extracción" in scan.unmatched_files[0]
+
+
+def test_un_7z_con_muchas_entradas_se_extrae_por_tandas(tmp_path, monkeypatch) -> None:
+    """El límite por entrada no acotaba el total: un 7z con dos mil entradas
+    pequeñas se traía todo a memoria de una vez."""
+    from retroperfect import scanner as scanner_module
+
+    archivo = tmp_path / "set.7z"
+    contenidos = {f"Juego {i} (Europe).nes": f"ROM-{i}".encode() * 64 for i in range(12)}
+    with py7zr.SevenZipFile(archivo, "w") as sevenzip:
+        for nombre, data in contenidos.items():
+            sevenzip.writef(io.BytesIO(data), nombre)
+
+    tandas: list[int] = []
+    original = scanner_module._read_7z_entries
+
+    def contar(archive, targets, largest):
+        tandas.append(len(targets))
+        return original(archive, targets, largest)
+
+    monkeypatch.setattr(scanner_module, "_read_7z_entries", contar)
+    # Presupuesto minúsculo para forzar varias tandas con entradas de pocos bytes.
+    monkeypatch.setattr(scanner_module, "MAX_7Z_BATCH_BYTES", 200)
+
+    scan = scanner_module.scan_directory(tmp_path, Platform.NES)
+
+    assert len(tandas) > 1, f"se extrajo todo de una vez: {tandas}"
+    assert max(tandas) < len(contenidos)
+    assert sum(tandas) == len(contenidos), "alguna entrada se quedó sin extraer"
+    # El resultado es el mismo que sin trocear, y en el orden del archivo.
+    assert [rom.inner_path for rom in scan.roms] == list(contenidos)
+    assert {rom.hashes.size for rom in scan.roms} == {len(data) for data in contenidos.values()}
+
+
+def test_las_tandas_del_7z_respetan_el_presupuesto() -> None:
+    from retroperfect.scanner import _7z_batches
+
+    class Entrada:
+        def __init__(self, size: int) -> None:
+            self.uncompressed = size
+            self.filename = f"{size}.nes"
+
+    tandas = list(_7z_batches([Entrada(300), Entrada(300), Entrada(300)], 700))
+    assert [len(t) for t in tandas] == [2, 1]
+
+    # Una entrada que por sí sola pasa del límite va sola, no se descarta.
+    tandas = list(_7z_batches([Entrada(5000), Entrada(10)], 700))
+    assert [len(t) for t in tandas] == [1, 1]

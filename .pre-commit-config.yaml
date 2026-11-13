@@ -1,0 +1,30 @@
+# Las mismas tres comprobaciones que la CI, antes del commit.
+# Instalar una vez: pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Misma versión que la instalada por [dev] en pyproject: con otra, el hook
+    # avisaría de cosas que la CI no ve, o al revés.
+    rev: v0.17.3
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(src|tests)/
+
+  - repo: local
+    hooks:
+      # mypy y pytest van en local a propósito: necesitan las dependencias del
+      # proyecto (pydantic, nicegui) para decir algo útil, y en un entorno
+      # aislado de pre-commit no las tienen.
+      - id: mypy
+        name: mypy
+        entry: mypy
+        language: system
+        pass_filenames: false
+        files: ^src/
+
+      - id: pytest
+        name: pytest
+        entry: pytest -q
+        language: system
+        pass_filenames: false
+        files: ^(src|tests)/

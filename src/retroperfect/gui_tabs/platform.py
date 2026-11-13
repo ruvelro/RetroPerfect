@@ -14,12 +14,13 @@ from ..gui_rows import (
 )
 from ..gui_state import _current_platform, state
 from ..gui_widgets import _data_table
+from ..i18n import _
 from ..platforms import list_platforms, platform_spec
 
 
 def build(ctx: UiContext) -> None:
     with ui.tab_panel(ctx.platform_tab).classes("p-0"), ui.column().classes(_panel_class() + " mb-4"):
-        ui.label("Plataforma").classes("text-lg font-semibold")
+        ui.label(_("Plataforma")).classes("text-lg font-semibold")
         platform_status = ui.label().classes("text-sm text-gray-600")
         kinds = ["Todos", *sorted({spec.kind for spec in list_platforms()})]
         generations = ["Todas", *sorted({spec.generation for spec in list_platforms()})]
@@ -29,11 +30,11 @@ def build(ctx: UiContext) -> None:
                 ui.tab(tab_label)
         platform_tabs.value = "Todas"
         with ui.row().classes("w-full gap-3 items-end"):
-            platform_search = ui.input("Buscar plataforma").props("outlined dense clearable").classes("w-64")
-            kind_filter = ui.select(kinds, value="Todos", label="Tipo").props("outlined dense").classes("w-48")
-            generation_filter = ui.select(generations, value="Todas", label="Generación").props("outlined dense").classes("w-48")
+            platform_search = ui.input(_("Buscar plataforma")).props("outlined dense clearable").classes("w-64")
+            kind_filter = ui.select(kinds, value="Todos", label=_("Tipo")).props("outlined dense").classes("w-48")
+            generation_filter = ui.select(generations, value="Todas", label=_("Generación")).props("outlined dense").classes("w-48")
             ui.space()
-            ui.label("Elige una consola; DAT, RA, extensiones y escaneo se adaptan a ella. Especiales incluye sistemas experimentales u ordenadores de cartucho.").classes("text-sm text-gray-500")
+            ui.label(_("Elige una consola; DAT, RA, extensiones y escaneo se adaptan a ella. Especiales incluye sistemas experimentales u ordenadores de cartucho.")).classes("text-sm text-gray-500")
         platform_cards = ui.element("div").classes("rp-platform-strip")
 
         def refresh_platform_cards() -> None:
@@ -41,7 +42,7 @@ def build(ctx: UiContext) -> None:
             with platform_cards:
                 rows = _platform_card_rows_for_tab(platform_family["value"], kind_filter.value, generation_filter.value, platform_search.value or "")
                 if not rows:
-                    ui.label("No hay plataformas en este filtro.").classes("text-sm text-gray-500")
+                    ui.label(_("No hay plataformas en este filtro.")).classes("text-sm text-gray-500")
                     return
                 for row in rows:
                     active_class = " rp-platform-card-active" if row["id"] == _current_platform().value else ""
@@ -81,14 +82,14 @@ def build(ctx: UiContext) -> None:
         generation_filter.on_value_change(lambda _: refresh_platform_cards())
         refresh_platform_status()
         ui.separator()
-        ui.label("Qué necesito descargar/importar").classes("text-md font-semibold")
+        ui.label(_("Qué necesito descargar/importar")).classes("text-md font-semibold")
         needed_table = _data_table(
             card=False,
             columns=[
                 {"name": "status", "label": "", "field": "status", "align": "center"},
-                {"name": "item", "label": "Elemento", "field": "item", "sortable": True, "align": "left"},
-                {"name": "detail", "label": "Detalle", "field": "detail", "align": "left"},
-                {"name": "recommendation", "label": "Recomendación", "field": "recommendation", "align": "left"},
+                {"name": "item", "label": _("Elemento"), "field": "item", "sortable": True, "align": "left"},
+                {"name": "detail", "label": _("Detalle"), "field": "detail", "align": "left"},
+                {"name": "recommendation", "label": _("Recomendación"), "field": "recommendation", "align": "left"},
             ],
             rows=[],
             pagination=6,
@@ -111,7 +112,7 @@ def build(ctx: UiContext) -> None:
                     _current_platform(),
                     Path(ctx.source.value) if ctx.source is not None and ctx.source.value else None,
                     Path(ctx.dat.value) if ctx.dat is not None and ctx.dat.value else None,
-                    state.scan,  # type: ignore[arg-type]
+                    state.scan,
                 )
             )
             needed_table.update()

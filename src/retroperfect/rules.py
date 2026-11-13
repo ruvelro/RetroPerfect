@@ -4,9 +4,52 @@ from collections import defaultdict
 from pathlib import Path
 
 from .metadata import parse_no_intro_name, strip_part, with_part
-from .models import ActionMode, CandidateDecision, ExportLayout, Manifest, ManifestEntry, ManifestPlaylist, OutputBucket, ProfileOutput, ScannedRom, ScanResult, SelectionProfile
+from .models import (
+    ARCHIVE_MODES,
+    ActionMode,
+    CandidateDecision,
+    ContainerMode,
+    ExportLayout,
+    Manifest,
+    ManifestArchive,
+    ManifestArchiveMember,
+    ManifestEntry,
+    ManifestPlaylist,
+    OutputBucket,
+    ProfileOutput,
+    ScannedRom,
+    ScanResult,
+    SelectionProfile,
+)
 from .platforms import platform_spec
-from .ra import RaPatchCandidate, find_ra_patch_candidates
+from .ra import RaPatchCandidate, normalize_ra_title, ra_patch_index
+
+# Fragmentos de los motivos que la interfaz reconoce para elegir el icono de
+# cada decisión. Viven aquí, junto a quien los escribe, porque la GUI los
+# buscaba como subcadenas copiadas a mano en su propio módulo: traducir un
+# motivo dejaba la pestaña Decisiones sin su icono y ningún test lo veía.
+MOTIVO_OVERRIDE = "elegido a mano"
+MOTIVO_1G1R = "1G1R estricto"
+MOTIVO_SIN_RA = "sin hash compatible con RetroAchievements"
+MOTIVO_RA = "RetroAchievements"
+MOTIVO_PARCHE = "parche"
+MOTIVO_TAG_EXCLUIDO = "excluido por etiqueta"
+MOTIVO_SIN_DAT = "sin coincidencia en el DAT"
+MOTIVO_REGION = "región"
+MOTIVO_IDIOMA = "idioma"
+MOTIVO_REVISION = "revisión"
+MOTIVO_DAT_OK = "verificado contra el DAT"
+MOTIVO_DAT_COINCIDE = "coincide con el DAT"
+
+
+def _en_mayuscula(motivo: str) -> str:
+    """Pone en mayúscula solo la primera letra.
+
+    `str.capitalize()` pasa el resto a minúsculas y dejaba "Coincide con el dat"
+    y "compatible con retroachievements".
+    """
+    return motivo[:1].upper() + motivo[1:]
+
 
 STRICT_1G1R_TAGS = {
     "Anniversary Collection",
@@ -96,34 +139,34 @@ def explain_score(rom: ScannedRom, output: ProfileOutput) -> list[str]:
     language_rank = priority_index(rom.metadata.languages, output.language_priority)
     revision_label = rom.metadata.version or (str(rom.metadata.revision) if rom.metadata.revision else "unknown")
     reasons = [
-        f"Region rank {region_rank}: {', '.join(rom.metadata.regions) or 'unknown'}",
-        f"Language rank {language_rank}: {', '.join(rom.metadata.languages) or 'unknown'}",
-        f"Revision: {revision_label}",
-        "DAT verified" if rom.dat_game else "No DAT match",
+        f"Prioridad de {MOTIVO_REGION} {region_rank}: {', '.join(rom.metadata.regions) or 'desconocida'}",
+        f"Prioridad de {MOTIVO_IDIOMA} {language_rank}: {', '.join(rom.metadata.languages) or 'desconocido'}",
+        f"{_en_mayuscula(MOTIVO_REVISION)}: {revision_label}",
+        _en_mayuscula(MOTIVO_DAT_OK) if rom.dat_game else _en_mayuscula(MOTIVO_SIN_DAT),
     ]
     if rom.ra_game_id:
-        reasons.append(f"RA compatible: {rom.ra_title or rom.ra_game_id}")
+        reasons.append(f"Compatible con {MOTIVO_RA}: {rom.ra_title or rom.ra_game_id}")
     if output.prefer_ra_compatible and not output.require_ra:
-        reasons.append("RA compatible variants may satisfy main 1G1R")
+        reasons.append(f"Las variantes compatibles con {MOTIVO_RA} pueden servir para el 1G1R principal")
     return reasons
 
 
 def _allowed(rom: ScannedRom, output: ProfileOutput) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     if output.strict_1g1r and not rom.dat_game:
-        return False, ["Excluded by strict 1G1R: no DAT match"]
+        return False, [f"Excluido por {MOTIVO_1G1R}: {MOTIVO_SIN_DAT}"]
     strict_excluded = _strict_exclusions(rom) if output.strict_1g1r else []
     if strict_excluded:
-        return False, [f"Excluded by strict 1G1R tag: {', '.join(strict_excluded)}"]
+        return False, [f"Excluido por {MOTIVO_1G1R}, etiqueta: {', '.join(strict_excluded)}"]
     if output.require_ra and not rom.ra_game_id:
-        return False, ["No compatible RetroAchievements hash"]
+        return False, [_en_mayuscula(MOTIVO_SIN_RA)]
     excluded = [tag for tag in rom.metadata.tags if tag in output.tag_excludes]
     if excluded:
-        return False, [f"Excluded by tag: {', '.join(excluded)}"]
+        return False, [f"{_en_mayuscula(MOTIVO_TAG_EXCLUIDO)}: {', '.join(excluded)}"]
     if output.require_ra:
-        reasons.append("Compatible with RetroAchievements")
+        reasons.append(f"Compatible con {MOTIVO_RA}")
     if output.strict_1g1r:
-        reasons.append("Strict 1G1R candidate")
+        reasons.append(f"Candidato de {MOTIVO_1G1R}")
     return True, reasons
 
 
@@ -161,31 +204,31 @@ def _loss_reasons(rom: ScannedRom, winner: ScannedRom, output: ProfileOutput) ->
     winner_region = priority_index(winner.metadata.regions, output.region_priority)
     if rom_region != winner_region:
         return [
-            "Discarded by region priority",
-            f"{', '.join(rom.metadata.regions) or 'unknown'} loses to {', '.join(winner.metadata.regions) or 'unknown'}",
+            f"Descartado por prioridad de {MOTIVO_REGION}",
+            f"{', '.join(rom.metadata.regions) or 'desconocida'} pierde contra {', '.join(winner.metadata.regions) or 'desconocida'}",
         ]
 
     rom_language = priority_index(rom.metadata.languages, output.language_priority)
     winner_language = priority_index(winner.metadata.languages, output.language_priority)
     if rom_language != winner_language:
         return [
-            "Discarded by language priority",
-            f"{', '.join(rom.metadata.languages) or 'unknown'} loses to {', '.join(winner.metadata.languages) or 'unknown'}",
+            f"Descartado por prioridad de {MOTIVO_IDIOMA}",
+            f"{', '.join(rom.metadata.languages) or 'desconocido'} pierde contra {', '.join(winner.metadata.languages) or 'desconocido'}",
         ]
 
     rom_revision = rom.metadata.revision
     winner_revision = winner.metadata.revision
     if output.prefer_ra_compatible and bool(rom.ra_game_id) != bool(winner.ra_game_id):
-        return ["Discarded because another candidate covers RetroAchievements"]
+        return [f"Descartado porque otro candidato cubre {MOTIVO_RA}"]
     if rom_revision != winner_revision:
         if output.prefer_newest_revision:
-            return ["Discarded by older revision", f"Rev {rom_revision} loses to Rev {winner_revision}"]
-        return ["Discarded by newer revision", f"Rev {rom_revision} loses to Rev {winner_revision}"]
+            return [f"Descartado por {MOTIVO_REVISION} más antigua", f"Rev {rom_revision} pierde contra Rev {winner_revision}"]
+        return [f"Descartado por {MOTIVO_REVISION} más nueva", f"Rev {rom_revision} pierde contra Rev {winner_revision}"]
 
     if bool(rom.dat_game) != bool(winner.dat_game):
-        return ["Discarded because another candidate has DAT verification"]
+        return [f"Descartado porque otro candidato está {MOTIVO_DAT_OK}"]
 
-    return [f"Lower priority than {Path(winner.source_path).name}"]
+    return [f"Menor prioridad que {Path(winner.source_path).name}"]
 
 
 def _special_folder(rom: ScannedRom) -> str | None:
@@ -227,6 +270,53 @@ def _destination_path(output_dir: Path | None, rom: ScannedRom, output: ProfileO
     if not output_dir or action == ActionMode.DELETE:
         return None
     return str(output_dir / _destination_folder(rom, output, layout) / (filename or Path(rom.container_path).name))
+
+
+CONTAINER_EXPLANATION = {
+    ContainerMode.EXTRACT: "Se extrae del contenedor como archivo suelto",
+    ContainerMode.REZIP: "Entra en un ZIP nuevo con el resto de archivos del juego",
+    ContainerMode.TORRENTZIP: "Entra en un ZIP canónico (TorrentZip) con el resto de archivos del juego",
+}
+
+
+def _rom_key(rom: ScannedRom) -> str:
+    return f"{rom.container_path}|{rom.inner_path}" if rom.inner_path else rom.container_path
+
+
+def member_name(rom: ScannedRom) -> str:
+    """Nombre del archivo al salir de su contenedor.
+
+    El del DAT cuando se conoce —es lo que hace que dos colecciones curadas se
+    parezcan— y el que ya tenía cuando no.
+    """
+    from .renaming import expected_file_name
+
+    return expected_file_name(rom) or Path(rom.inner_path or rom.container_path).name
+
+
+def _archive_title(winner: ScannedRom) -> str:
+    return winner.dat_game.name if winner.dat_game else winner.metadata.title
+
+
+def _container_destination(
+    output_dir: Path | None,
+    rom: ScannedRom,
+    winner: ScannedRom,
+    output: ProfileOutput,
+    action: ActionMode,
+    layout: ExportLayout,
+    container_mode: ContainerMode,
+) -> str | None:
+    """Ruta de destino según qué se haga con los contenedores.
+
+    Con `keep` es el contenedor; con `extract`, el archivo suelto; con `rezip`,
+    un ZIP por juego al que van todos sus archivos.
+    """
+    if container_mode in ARCHIVE_MODES:
+        return _destination_path(output_dir, rom, output, action, layout, filename=f"{Path(_archive_title(winner)).stem}.zip")
+    if container_mode == ContainerMode.EXTRACT:
+        return _destination_path(output_dir, rom, output, action, layout, filename=member_name(rom))
+    return _destination_path(output_dir, rom, output, action, layout)
 
 
 def _patch_candidate_score(candidate: RaPatchCandidate, output: ProfileOutput) -> tuple:
@@ -322,7 +412,7 @@ def select_best(
         decisions.append(CandidateDecision(rom_id=rom.id, source_path=rom.source_path, kept=kept, reasons=[sibling_reason] if kept else reasons))
     for rom in allowed:
         if rom.id == winner.id:
-            reasons = ["Selected by manual override" if override else "Selected as best candidate", *explain_score(rom, output)]
+            reasons = [f"Seleccionado: {MOTIVO_OVERRIDE}" if override else "Seleccionado como mejor candidato", *explain_score(rom, output)]
         elif rom.id in siblings:
             reasons = [sibling_reason]
         else:
@@ -414,6 +504,7 @@ def build_manifest(
     action: ActionMode = ActionMode.COPY,
     overrides: dict[str, dict[str, str]] | None = None,
     ra_cache: Path | None = None,
+    container_mode: ContainerMode = ContainerMode.KEEP,
 ) -> Manifest:
     manifest = Manifest(
         id=f"manifest-{scan.id}",
@@ -428,6 +519,13 @@ def build_manifest(
     overrides = overrides or {}
     layout = profile.export_layout
     complete = complete_variants(scan)
+    # Se construye a la primera que haga falta: consultarlo por grupo leía la
+    # tabla entera de parches cada vez.
+    patch_index: dict[str, list[RaPatchCandidate]] | None = None
+    # Con rezip, los archivos de un juego van juntos a un ZIP nuevo, así que el
+    # destino se comparte a propósito: lo que identifica una operación deja de
+    # ser el contenedor y pasa a ser el archivo concreto.
+    archives: dict[str, ManifestArchive] = {}
     for output in profile.outputs:
         if output.bucket not in outputs:
             continue
@@ -443,7 +541,9 @@ def build_manifest(
                     base_winner, base_decisions = select_best(candidates, base_output, override_rom_id=override_rom_id, complete=complete)
                     manifest.discarded.extend(base_decisions)
                     if base_winner:
-                        patch_candidates = sorted(find_ra_patch_candidates(scan.platform, base_winner.metadata.title, cache=ra_cache), key=lambda candidate: _patch_candidate_score(candidate, output))
+                        if patch_index is None:
+                            patch_index = ra_patch_index(scan.platform, cache=ra_cache)
+                        patch_candidates = sorted(patch_index.get(normalize_ra_title(base_winner.metadata.title), []), key=lambda candidate: _patch_candidate_score(candidate, output))
                         if patch_candidates:
                             patch_candidate = patch_candidates[0]
                             destination_name = _patch_destination_name(patch_candidate, base_winner)
@@ -462,10 +562,10 @@ def build_manifest(
                                     patch_expected_md5=patch_candidate.md5,
                                     patch_name=patch_candidate.hash_name,
                                     explanation=[
-                                        "RetroAchievements output generated by patch",
-                                        f"Patch URL: {patch_candidate.patch_url}",
-                                        f"Expected RA MD5: {patch_candidate.md5}",
-                                        f"Organized export folder: {_destination_folder(base_winner, output, layout)}",
+                                        f"Salida de {MOTIVO_RA} generada con un {MOTIVO_PARCHE}",
+                                        f"URL del {MOTIVO_PARCHE}: {patch_candidate.patch_url}",
+                                        f"MD5 RA esperado: {patch_candidate.md5}",
+                                        f"Carpeta de la salida organizada: {_destination_folder(base_winner, output, layout)}",
                                         *explain_score(base_winner, base_output),
                                     ],
                                 )
@@ -481,25 +581,41 @@ def build_manifest(
             for rom in (winner, *siblings):
                 if layout == ExportLayout.ORGANIZED and output.bucket == OutputBucket.RA and rom.container_path in copied_main_paths:
                     continue
-                key = (output.bucket, rom.container_path)
+                key = (output.bucket, rom.container_path) if container_mode == ContainerMode.KEEP else (output.bucket, _rom_key(rom))
                 if key in selected_paths:
                     continue
                 selected_paths.add(key)
                 if output.bucket == OutputBucket.MAIN:
                     copied_main_paths.add(rom.container_path)
-                destination = _destination_path(output_dir, rom, output, action, layout)
+                destination = _container_destination(output_dir, rom, winner, output, action, layout, container_mode)
+                if container_mode in ARCHIVE_MODES and destination:
+                    archive = archives.setdefault(
+                        destination,
+                        ManifestArchive(path=destination, title=_archive_title(winner), mode=container_mode),
+                    )
+                    archive.members.append(
+                        ManifestArchiveMember(
+                            source_path=rom.container_path,
+                            source_inner_path=rom.inner_path,
+                            name=member_name(rom),
+                            md5=rom.hashes.md5,
+                            size=rom.hashes.size,
+                        )
+                    )
                 if rom.id == winner.id:
-                    explanation = ["Selected by manual override"] if override_rom_id == winner.id else ["Selected as best candidate"]
+                    explanation = [f"Seleccionado: {MOTIVO_OVERRIDE}"] if override_rom_id == winner.id else ["Seleccionado como mejor candidato"]
                 else:
                     explanation = [f"Archivo del juego elegido: {winner.dat_game.name}" if winner.dat_game else "Archivo del juego elegido"]
                 if layout == ExportLayout.ORGANIZED:
-                    explanation.append(f"Organized export folder: {_destination_folder(rom, output, layout)}")
+                    explanation.append(f"Carpeta de la salida organizada: {_destination_folder(rom, output, layout)}")
+                if container_mode != ContainerMode.KEEP and rom.inner_path:
+                    explanation.append(CONTAINER_EXPLANATION[container_mode])
                 if output.require_ra:
-                    explanation.append("RetroAchievements output requires a matching RA hash")
+                    explanation.append(f"La salida de {MOTIVO_RA} exige un hash que coincida")
                 if rom.ra_patch_url or "rapatches" in {label.lower() for label in rom.ra_labels}:
-                    explanation.append(f"RetroAchievements patch metadata: {rom.ra_patch_url or 'rapatches'}")
+                    explanation.append(f"Metadatos de {MOTIVO_PARCHE} de {MOTIVO_RA}: {rom.ra_patch_url or 'rapatches'}")
                 if rom.dat_game:
-                    explanation.append(f"DAT match: {rom.dat_game.name}")
+                    explanation.append(f"{_en_mayuscula(MOTIVO_DAT_COINCIDE)}: {rom.dat_game.name}")
                 if rom.id == winner.id:
                     explanation.extend(explain_score(rom, output))
                 manifest.entries.append(
@@ -507,7 +623,14 @@ def build_manifest(
                         bucket=output.bucket,
                         action=action,
                         source_path=rom.container_path,
-                        source_md5=rom.hashes.md5 if rom.inner_path is None else None,
+                        source_inner_path=rom.inner_path if container_mode != ContainerMode.KEEP else None,
+                        # Con un contenedor, el MD5 del archivo de origen no es
+                        # el de la ROM; al extraer, lo que se escribe sí es la
+                        # ROM, así que ahí su MD5 es justo lo que hay que
+                        # verificar.
+                        source_md5=rom.hashes.md5 if rom.inner_path is None or container_mode != ContainerMode.KEEP else None,
+                        source_size=rom.hashes.size,
+                        container_mode=container_mode,
                         destination_path=destination,
                         rom_id=rom.id,
                         dat_name=rom.dat_game.name if rom.dat_game else None,
@@ -516,6 +639,7 @@ def build_manifest(
                     )
                 )
     if action != ActionMode.DELETE:
+        manifest.archives = [archives[clave] for clave in sorted(archives)]
         manifest.playlists = _build_playlists(manifest, scan)
     if action == ActionMode.DELETE and selected_buckets:
         discard_reasons: dict[str, list[str]] = {}

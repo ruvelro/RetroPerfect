@@ -16,7 +16,7 @@ from retroperfect.dat import DatIndex, parse_dat
 from retroperfect.fixdat import build_fixdat, missing_roms
 from retroperfect.frontends import build_retroarch_playlist, libretro_system, write_gamelist, write_retroarch_playlist
 from retroperfect.models import ActionMode, OutputBucket, Platform
-from retroperfect.profile import DEFAULT_PROFILE
+from retroperfect.profile import DEFAULT_PROFILE, RECOMMENDED_PROFILES
 from retroperfect.rules import build_manifest
 from retroperfect.scanner import scan_directory
 from test_multidisc import _dat, _escribir, _tres_discos
@@ -112,7 +112,12 @@ def test_escribir_la_playlist_deja_json_valido(tmp_path: Path) -> None:
 
 
 def test_el_gamelist_conserva_lo_que_ya_habia(tmp_path: Path) -> None:
-    """Ahí viven los favoritos y las horas jugadas del usuario: no se pisan."""
+    """Ahí viven los favoritos y las horas jugadas del usuario: no se pisan.
+
+    La ROM de este escenario vive en `roms/`, así que la ruta que se escribe la
+    incluye: es relativa al propio gamelist.xml, que es como la resuelve el
+    frontend.
+    """
     catalog, scan = _escenario(tmp_path, {"Juego (Europe)": {"Juego (Europe).iso": b"ROM"}})
     destino = tmp_path / "gamelist.xml"
     destino.write_text(
@@ -125,7 +130,7 @@ def test_el_gamelist_conserva_lo_que_ya_habia(tmp_path: Path) -> None:
     write_gamelist(scan, destino)
 
     raiz = ET.parse(destino).getroot()
-    nuestro = next(nodo for nodo in raiz.findall("game") if nodo.findtext("path") == "./Juego (Europe).iso")
+    nuestro = next(nodo for nodo in raiz.findall("game") if nodo.findtext("path") == "./roms/Juego (Europe).iso")
     assert nuestro.findtext("favorite") == "true", "se perdieron los favoritos del usuario"
     assert nuestro.findtext("playcount") == "42"
     assert nuestro.findtext("name") == "Juego (Europe)"
@@ -225,3 +230,146 @@ def test_el_manifiesto_acota_las_caratulas_a_lo_que_se_conserva(tmp_path: Path, 
 
     assert len(resultados) == 3, "solo las tres variantes que el plan conserva"
     assert all("Europe" in Path(r.path).name for r in resultados)
+
+def test_el_gamelist_apunta_a_la_carpeta_de_la_salida_organizada(tmp_path: Path) -> None:
+    """El frontend resuelve <path> desde el propio gamelist.xml: sin la carpeta
+    de la salida organizada (EUR/, USA/...) no encontraba ni un juego."""
+    catalog, scan = _escenario(tmp_path, {"Juego (Europe)": {"Juego (Europe).iso": b"ROM"}})
+    salida = tmp_path / "curada"
+    manifest = build_manifest(scan, RECOMMENDED_PROFILES["1G1R puro"], [OutputBucket.MAIN], output_dir=salida, action=ActionMode.COPY)
+    destino = salida / "gamelist.xml"
+
+    write_gamelist(scan, destino, manifest)
+
+    rutas = [nodo.findtext("path") for nodo in ET.parse(destino).getroot().findall("game")]
+    assert rutas == ["./EUR/Juego (Europe).iso"]
+
+
+def test_el_gamelist_reapunta_las_entradas_que_listaban_el_juego_en_la_raiz(tmp_path: Path) -> None:
+    """Migración de los gamelist que escribió la versión con la ruta plana: se
+    corrige la entrada en vez de dejar un duplicado que no apunta a nada."""
+    catalog, scan = _escenario(tmp_path, {"Juego (Europe)": {"Juego (Europe).iso": b"ROM"}})
+    salida = tmp_path / "curada"
+    manifest = build_manifest(scan, RECOMMENDED_PROFILES["1G1R puro"], [OutputBucket.MAIN], output_dir=salida, action=ActionMode.COPY)
+    destino = salida / "gamelist.xml"
+    destino.parent.mkdir(parents=True)
+    destino.write_text(
+        '<?xml version="1.0"?><gameList><game><path>./Juego (Europe).iso</path>'
+        "<favorite>true</favorite></game></gameList>",
+        encoding="utf-8",
+    )
+
+    write_gamelist(scan, destino, manifest)
+
+    juegos = ET.parse(destino).getroot().findall("game")
+    assert [nodo.findtext("path") for nodo in juegos] == ["./EUR/Juego (Europe).iso"]
+    assert juegos[0].findtext("favorite") == "true", "se perdieron los favoritos al migrar la ruta"
+
+def test_el_gamelist_enlaza_la_caratula_descargada(tmp_path: Path) -> None:
+    """`thumbnails` las bajaba y nadie las referenciaba, así que el frontend las
+    ignoraba y acababa re-escaneando con su propia base de datos."""
+    catalog, scan = _escenario(tmp_path, {"Juego (Europe)": {"Juego (Europe).iso": b"ROM"}})
+    caratulas = tmp_path / "thumbnails"
+    (caratulas / "Named_Boxarts").mkdir(parents=True)
+    (caratulas / "Named_Boxarts" / "Juego (Europe).png").write_bytes(b"PNG")
+    destino = tmp_path / "gamelist.xml"
+
+    write_gamelist(scan, destino, None, thumbnails_dir=caratulas)
+
+    nodo = ET.parse(destino).getroot().find("game")
+    assert nodo is not None
+    assert nodo.findtext("image") == "./thumbnails/Named_Boxarts/Juego (Europe).png"
+
+
+def test_sin_caratula_no_se_inventa_la_etiqueta(tmp_path: Path) -> None:
+    catalog, scan = _escenario(tmp_path, {"Juego (Europe)": {"Juego (Europe).iso": b"ROM"}})
+    destino = tmp_path / "gamelist.xml"
+
+    write_gamelist(scan, destino, None, thumbnails_dir=tmp_path / "thumbnails-vacias")
+
+    assert ET.parse(destino).getroot().find("game").findtext("image") is None
+
+
+def test_la_caratula_se_empareja_por_el_nombre_exacto_del_dat(tmp_path: Path) -> None:
+    """Con la misma sustitución de caracteres que usa `thumbnails`: los dos
+    lados tienen que normalizar igual o no se encuentra nada."""
+    from retroperfect.thumbnails import thumbnail_name
+
+    # Los dos puntos los sustituye `thumbnail_name`; `&` rompería este XML
+    # de prueba, que no escapa nada (un DAT real sí lo trae como &amp;).
+    juego = "Juego: Edición"
+    catalog, scan = _escenario(tmp_path, {juego: {f"{juego}.iso": b"ROM"}})
+    caratulas = tmp_path / "thumbnails"
+    (caratulas / "Named_Snaps").mkdir(parents=True)
+    (caratulas / "Named_Snaps" / f"{thumbnail_name(juego)}.png").write_bytes(b"PNG")
+    destino = tmp_path / "gamelist.xml"
+
+    write_gamelist(scan, destino, None, thumbnails_dir=caratulas)
+
+    imagen = ET.parse(destino).getroot().find("game").findtext("image")
+    assert imagen is not None and imagen.endswith(f"{thumbnail_name(juego)}.png")
+
+
+# --- Pegasus -----------------------------------------------------------------
+
+
+def test_pegasus_escribe_cabecera_y_un_bloque_por_juego(tmp_path: Path) -> None:
+    """Pegasus es el frontend de muchas portátiles caseras y no lee ni .lpl ni
+    gamelist.xml: usa un archivo de texto con su propia forma."""
+    from retroperfect.frontends import write_pegasus
+
+    catalog, scan = _escenario(tmp_path, {"Juego (Europe)": {"Juego (Europe).iso": b"ROM"}})
+    destino = tmp_path / "metadata.pegasus.txt"
+
+    write_pegasus(scan, destino)
+
+    lineas = destino.read_text(encoding="utf-8").splitlines()
+    assert lineas[0] == "collection: Sony - PlayStation"
+    assert "shortname: ps1" in lineas
+    assert any(linea.startswith("extensions: ") for linea in lineas)
+    assert "game: Juego (Europe)" in lineas
+    assert any(linea.startswith("file: ./roms/Juego (Europe).iso") for linea in lineas)
+    assert "x-region: Europe" in lineas
+
+
+def test_pegasus_usa_las_rutas_del_plan_y_el_m3u_de_los_multidisco(tmp_path: Path) -> None:
+    from retroperfect.frontends import write_pegasus
+    from test_multidisc import _tres_discos
+
+    catalog, scan = _escenario(tmp_path, _tres_discos("Europe"))
+    salida = tmp_path / "curada"
+    manifest = build_manifest(scan, DEFAULT_PROFILE, [OutputBucket.MAIN], output_dir=salida, action=ActionMode.COPY)
+    destino = salida / "metadata.pegasus.txt"
+
+    write_pegasus(scan, destino, manifest)
+
+    texto = destino.read_text(encoding="utf-8")
+    assert texto.count("game: ") == 1, "los tres discos son un solo juego en el frontend"
+    assert "Final Fantasy VII.m3u" in texto
+
+
+def test_pegasus_enlaza_la_caratula_si_esta(tmp_path: Path) -> None:
+    from retroperfect.frontends import write_pegasus
+
+    catalog, scan = _escenario(tmp_path, {"Juego (Europe)": {"Juego (Europe).iso": b"ROM"}})
+    caratulas = tmp_path / "thumbnails"
+    (caratulas / "Named_Boxarts").mkdir(parents=True)
+    (caratulas / "Named_Boxarts" / "Juego (Europe).png").write_bytes(b"PNG")
+    destino = tmp_path / "metadata.pegasus.txt"
+
+    write_pegasus(scan, destino, None, thumbnails_dir=caratulas)
+
+    assert "assets.boxFront: ./thumbnails/Named_Boxarts/Juego (Europe).png" in destino.read_text(encoding="utf-8")
+
+
+def test_pegasus_se_reescribe_entero(tmp_path: Path) -> None:
+    """Al contrario que el gamelist: Pegasus guarda aparte los favoritos."""
+    from retroperfect.frontends import write_pegasus
+
+    catalog, scan = _escenario(tmp_path, {"Juego (Europe)": {"Juego (Europe).iso": b"ROM"}})
+    destino = tmp_path / "metadata.pegasus.txt"
+    destino.write_text("basura anterior\n", encoding="utf-8")
+
+    write_pegasus(scan, destino)
+
+    assert "basura anterior" not in destino.read_text(encoding="utf-8")

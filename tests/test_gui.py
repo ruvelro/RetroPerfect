@@ -278,3 +278,71 @@ async def test_gui_torrent_pide_un_plan_antes_de_encolar(user: User, tmp_path, m
     await user.should_see("Calcula primero un plan que incluya archivos de un torrent")
     user.find("Recoger lo descargado").click()
     await user.should_see("Calcula primero un plan que incluya archivos de un torrent")
+
+
+async def test_gui_ofrece_reemplazar_lo_que_ya_haya_en_el_destino(user: User) -> None:
+    """Sin esta casilla, un destino ocupado por otro archivo deja al usuario de
+    la interfaz sin salida: la aplicación se detiene y no hay cómo autorizarla."""
+    await user.open("/")
+    casilla = next(
+        element for element in user.find(ui.checkbox).elements if "Reemplazar lo que ya haya" in (element.text or "")
+    )
+    assert casilla.value is False, "reemplazar no puede ser el comportamiento por defecto"
+
+
+async def test_gui_permite_cancelar_el_escaneo_y_la_aplicacion(user: User) -> None:
+    """Las dos operaciones largas tienen que poder cortarse sin cerrar la app;
+    viven en pestañas que arrancan bloqueadas por el gate."""
+    await user.open("/")
+    botones = [element.text for element in user.find(ui.button).elements]
+
+    assert "Cancelar escaneo" in botones
+    assert botones.count("Cancelar") >= 2, "faltan los de Descargar y Plan"
+
+
+async def test_gui_permite_arreglar_los_nombres_sin_pasar_por_la_terminal(user: User) -> None:
+    """El núcleo sabe renombrar, así que la interfaz no puede remitir a la CLI:
+    la app empaquetada no tiene terminal. Viven en Verificar, que es donde se
+    ven los mal nombrados."""
+    await user.open("/")
+    botones = [element.text for element in user.find(ui.button).elements]
+
+    assert "Planificar renombrados" in botones
+    assert "Renombrar" in botones
+    casilla = next(
+        element for element in user.find(ui.checkbox).elements if "autorizo renombrar" in (element.text or "")
+    )
+    assert casilla.value is False, "renombrar no puede aplicarse sin confirmación"
+
+
+async def test_gui_permite_deshacer_una_aplicacion(user: User) -> None:
+    """Mismo razonamiento que la papelera: deshacer es recuperarse de algo ya
+    hecho, así que vive en Actividad y no puede exigir setup ni escaneo."""
+    await user.open("/")
+    botones = [element.text for element in user.find(ui.button).elements]
+
+    assert "Deshacer aplicación" in botones
+    assert "Refrescar aplicaciones" in botones
+
+
+async def test_gui_deja_elegir_que_hacer_con_los_contenedores(user: User) -> None:
+    """Copiar el ZIP entero se lleva los descartes de dentro; la interfaz tiene
+    que poder pedir extraer o reempaquetar sin bajar a la terminal."""
+    await user.open("/")
+    selects = [element for element in user.find(ui.select).elements if "ZIP y 7z" in str(element._props.get("label", ""))]
+
+    assert selects, "falta el selector de contenedores en la pestaña Plan"
+    assert selects[0].value == "keep", "el comportamiento de siempre sigue siendo el de por defecto"
+    assert set(selects[0].options) == {"keep", "extract", "rezip", "torrentzip"}
+
+
+async def test_gui_permite_llenar_un_dispositivo_con_presupuesto(user: User) -> None:
+    """Llenar una SD es un plan acotado por tamaño; la app empaquetada no tiene
+    terminal donde escribir `sync-device`."""
+    await user.open("/")
+    botones = [element.text for element in user.find(ui.button).elements]
+
+    assert "Calcular qué cabe" in botones
+    assert "Sincronizar dispositivo" in botones
+    presupuesto = next(element for element in user.find(ui.input).elements if element._props.get("label") == "Cabe")
+    assert presupuesto.value == "32GB", "un valor por defecto reconocible evita que se escriba a ojo"

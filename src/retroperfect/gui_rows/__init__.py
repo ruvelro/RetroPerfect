@@ -46,17 +46,19 @@ from .platform import (
     _source_suffixes,
 )
 from .styles import (
-    ACTION_LABELS,
     FLAGS,
     _flag_regions,
     _latest_project_path,
     _page_class,
     _panel_class,
     _ra_icon,
+    action_labels,
+    container_labels,
 )
 
 __all__ = [
-    "ACTION_LABELS",
+    "action_labels",
+    "container_labels",
     "DATOMATIC_GAP_ROWS",
     "FLAGS",
     "LANGUAGES",

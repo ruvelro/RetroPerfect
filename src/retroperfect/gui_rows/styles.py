@@ -3,14 +3,29 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..models import ActionMode
+from ..i18n import _
+from ..models import ActionMode, ContainerMode
 from ..paths import project_state_dir
 
-ACTION_LABELS = {
-    ActionMode.COPY.value: "Copiar archivos",
-    ActionMode.MOVE.value: "Mover archivos",
-    ActionMode.DELETE.value: "Borrar archivos",
-}
+
+# Estas etiquetas son funciones y no diccionarios de módulo a propósito: un
+# diccionario se evalúa al importar, así que el idioma quedaría fijado al
+# arrancar y el selector de la cabecera no cambiaría nada.
+def container_labels() -> dict[str, str]:
+    return {
+        ContainerMode.KEEP.value: _("Copiar el contenedor entero"),
+        ContainerMode.EXTRACT.value: _("Extraer la ROM del contenedor"),
+        ContainerMode.REZIP.value: _("Un ZIP por juego, solo con lo que se conserva"),
+        ContainerMode.TORRENTZIP.value: _("Un ZIP por juego, canónico (TorrentZip)"),
+    }
+
+
+def action_labels() -> dict[str, str]:
+    return {
+        ActionMode.COPY.value: _("Copiar archivos"),
+        ActionMode.MOVE.value: _("Mover archivos"),
+        ActionMode.DELETE.value: _("Borrar archivos"),
+    }
 
 
 def _page_class() -> str:

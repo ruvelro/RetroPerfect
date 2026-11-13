@@ -23,6 +23,7 @@ from retroperfect import cli as cli_module
 from retroperfect import dat_sources, downloader, patching, profile, ra, remote_zip, rom_sources
 from retroperfect.cli import app
 from retroperfect.models import ActionMode, Manifest, ManifestEntry, OutputBucket, Platform
+from retroperfect.storage import load_scan
 
 runner = CliRunner()
 
@@ -327,7 +328,7 @@ def test_scan_guarda_el_resultado_en_el_estado_del_proyecto(entorno: Path) -> No
     result = runner.invoke(app, ["scan", "--platform", "nes", "--input", str(roms), "--no-annotate-ra"])
 
     assert result.exit_code == 0, result.output
-    assert "Scan Summary" in _texto(result)
+    assert "Resumen del escaneo" in _texto(result)
     latest = entorno / ".retroperfect" / "scans" / "latest.json"
     assert json.loads(latest.read_text(encoding="utf-8"))["roms"]
 
@@ -340,9 +341,12 @@ def test_scan_con_dat_empareja_las_roms(entorno: Path) -> None:
     result = runner.invoke(app, ["scan", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--no-annotate-ra"])
 
     assert result.exit_code == 0, result.output
-    scan = json.loads((entorno / ".retroperfect" / "scans" / "latest.json").read_text(encoding="utf-8"))
-    assert scan["roms"][0]["dat_game"]["name"] == "Juego (Europe)"
-    assert scan["dat_path"] == str(dat)
+    # Por la API pública, no por la forma del archivo: el escaneo guarda los
+    # juegos del DAT en una tabla aparte para no repetirlos en cada ROM.
+    scan = load_scan(entorno / ".retroperfect" / "scans" / "latest.json")
+    assert scan.roms[0].dat_game is not None
+    assert scan.roms[0].dat_game.name == "Juego (Europe)"
+    assert scan.dat_path == str(dat)
 
 
 def test_scan_rechaza_una_plataforma_desconocida(entorno: Path) -> None:
@@ -490,7 +494,7 @@ def test_export_rechaza_un_formato_desconocido(entorno: Path) -> None:
     result = runner.invoke(app, ["export", "--input", str(roms), "--format", "launchbox"])
 
     assert result.exit_code == 2
-    assert "lpl" in _texto(result)
+    assert "lpl, gamelist o pegasus" in _texto(result), "el aviso tiene que nombrar los formatos que sí hay"
 
 
 def test_thumbnails_avisa_si_libretro_no_publica_esa_plataforma(entorno: Path) -> None:
@@ -573,7 +577,7 @@ def test_validate_con_origen_y_dat_correctos_no_reporta_nada(entorno: Path) -> N
     result = runner.invoke(app, ["validate", "--input", str(roms), "--dat", str(dat), "--output-dir", str(entorno / "out")])
 
     assert result.exit_code == 0, result.output
-    assert "ready" in _texto(result)
+    assert "configuración está lista" in _texto(result)
 
 
 def test_validate_detecta_rutas_inexistentes(entorno: Path) -> None:
@@ -592,7 +596,7 @@ def test_dat_import_registra_el_dat_y_dat_list_lo_muestra(entorno: Path) -> None
 
     importado = runner.invoke(app, ["dat-import", str(dat)])
     assert importado.exit_code == 0, importado.output
-    assert "Imported" in importado.output
+    assert "Importado" in importado.output
 
     listado = runner.invoke(app, ["dat-list"])
     assert listado.exit_code == 0, listado.output
@@ -610,7 +614,7 @@ def test_dat_import_acepta_un_zip_con_varios_dats(entorno: Path) -> None:
     result = runner.invoke(app, ["dat-import", str(paquete)])
 
     assert result.exit_code == 0, result.output
-    assert result.output.count("Imported") == 2
+    assert result.output.count("Importado") == 2
 
 
 def test_dat_import_falla_si_el_archivo_no_existe(entorno: Path) -> None:
@@ -623,7 +627,7 @@ def test_dat_list_sin_dats_instalados_no_falla(entorno: Path) -> None:
     result = runner.invoke(app, ["dat-list"])
 
     assert result.exit_code == 0
-    assert "Installed DATs" in _texto(result)
+    assert "DATs instalados" in _texto(result)
 
 
 def test_dat_compare_resume_los_juegos_comunes_y_exclusivos(entorno: Path) -> None:
@@ -633,15 +637,15 @@ def test_dat_compare_resume_los_juegos_comunes_y_exclusivos(entorno: Path) -> No
     result = runner.invoke(app, ["dat-compare", str(izquierda), str(derecha)])
 
     assert result.exit_code == 0, result.output
-    assert "Common games" in _texto(result)
-    assert "Left-only games" in _texto(result)
+    assert "Juegos en común" in _texto(result)
+    assert "Juegos solo en el primero" in _texto(result)
 
 
 def test_dat_download_sin_argumentos_solo_lista_las_fuentes_online(entorno: Path) -> None:
     result = runner.invoke(app, ["dat-download", "--platform", "nes"])
 
     assert result.exit_code == 0, result.output
-    assert "Online DAT Sources" in _texto(result)
+    assert "Fuentes DAT en línea" in _texto(result)
     assert "libretro-nes-nointro" in _texto(result)
 
 
@@ -916,7 +920,7 @@ def test_gui_arranca_el_servidor_con_los_parametros_dados(entorno: Path, monkeyp
     result = runner.invoke(app, ["gui", "--host", "0.0.0.0", "--port", "9999", "--exit-on-idle"])
 
     assert result.exit_code == 0, result.output
-    assert llamadas == [{"host": "0.0.0.0", "port": 9999, "exit_on_idle": True}]
+    assert llamadas == [{"host": "0.0.0.0", "port": 9999, "exit_on_idle": True, "allow_remote": False}]
 
 
 # --- Ayuda y registro de comandos --------------------------------------------
@@ -944,3 +948,452 @@ def test_cada_comando_tiene_ayuda_propia(entorno: Path, comando: str) -> None:
     result = runner.invoke(app, [comando, "--help"])
 
     assert result.exit_code == 0, result.output
+
+
+def test_un_dat_ilegible_sale_como_aviso_y_no_como_traceback(entorno: Path) -> None:
+    """Un DAT corrupto, que no sea XML o que declare entidades propias no es un
+    fallo del programa: es un archivo que el usuario tiene que cambiar."""
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": b"ROM"})
+    bomba = entorno / "bomba.dat"
+    bomba.write_text(
+        '<?xml version="1.0"?>\n<!DOCTYPE datafile [<!ENTITY a "aa">]>\n<datafile><header><name>&a;</name></header></datafile>',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["verify", "--platform", "nes", "--input", str(roms), "--dat", str(bomba)])
+
+    assert result.exit_code == 2
+    assert "Traceback" not in result.output
+    assert "entidades XML propias" in _texto(result)
+
+
+# --- version y doctor --------------------------------------------------------
+
+
+def test_version_muestra_la_del_paquete() -> None:
+    """Lo primero que se pide en un informe de fallo, y no estaba."""
+    import retroperfect
+
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert retroperfect.__version__ in _texto(result)
+
+
+def test_doctor_informa_del_estado_de_la_instalacion(entorno: Path) -> None:
+    result = runner.invoke(app, ["doctor"])
+
+    texto = _texto(result)
+    assert result.exit_code == 0, result.output
+    for esperado in ["RetroPerfect", "Python", "Carpeta de trabajo", "Estado del proyecto", "CHD", "Biblioteca DAT"]:
+        assert esperado in texto, esperado
+
+
+def test_doctor_no_filtra_la_clave_de_retroachievements(entorno: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """La tabla está pensada para pegarla en un issue."""
+    from retroperfect.ra import save_credentials
+
+    save_credentials("mi-usuario", "clave-secretisima")
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert "clave-secretisima" not in result.output
+    assert "mi-usuario" not in result.output
+    assert "configuradas" in _texto(result)
+
+
+def test_doctor_avisa_si_falta_un_lector_opcional(entorno: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin chdimage los .chd se ignoran al escanear, y eso hay que poder verlo."""
+    from retroperfect import chd
+
+    monkeypatch.setattr(chd, "chdimage", None)
+
+    result = runner.invoke(app, ["doctor"])
+
+    texto = _texto(result)
+    assert "no instalado" in texto
+    assert "los .chd se ignoran" in texto
+
+
+# --- rename ------------------------------------------------------------------
+
+
+def test_rename_sin_confirm_solo_muestra_lo_que_haria(entorno: Path) -> None:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"mal_nombrado.nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+
+    result = runner.invoke(app, ["rename", "--platform", "nes", "--input", str(roms), "--dat", str(dat)])
+
+    texto = _texto(result)
+    assert result.exit_code == 0, result.output
+    assert "Juego (Europe).nes" in texto
+    assert "Simulación" in texto
+    assert (roms / "mal_nombrado.nes").exists(), "sin --confirm no se toca nada"
+
+
+def test_rename_con_confirm_renombra(entorno: Path) -> None:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"mal_nombrado.nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+
+    result = runner.invoke(app, ["rename", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--confirm"])
+
+    assert result.exit_code == 0, result.output
+    assert (roms / "Juego (Europe).nes").read_bytes() == payload
+    assert not (roms / "mal_nombrado.nes").exists()
+
+
+def test_rename_de_una_coleccion_bien_nombrada_no_hace_nada(entorno: Path) -> None:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+
+    result = runner.invoke(app, ["rename", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--confirm"])
+
+    assert result.exit_code == 0
+    assert "se llaman como dice el DAT" in _texto(result)
+
+
+# --- caché de hashes ---------------------------------------------------------
+
+
+def test_la_cache_se_exporta_se_vacia_y_se_recupera(entorno: Path) -> None:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+    runner.invoke(app, ["scan", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--no-annotate-ra"])
+
+    exportado = runner.invoke(app, ["cache-export", "--output", str(entorno / "cache.json")])
+    assert exportado.exit_code == 0, exportado.output
+    assert "Exportadas 1 entradas" in _texto(exportado)
+
+    sin_confirmar = runner.invoke(app, ["cache-clear"])
+    assert sin_confirmar.exit_code == 1, "vaciar la caché obliga a rehashear: hay que confirmarlo"
+
+    vaciado = runner.invoke(app, ["cache-clear", "--confirm"])
+    assert "1 entradas eliminadas" in _texto(vaciado)
+
+    importado = runner.invoke(app, ["cache-import", str(entorno / "cache.json")])
+    assert importado.exit_code == 0, importado.output
+    assert "Importadas 1 entradas" in _texto(importado)
+    assert "puede reutilizar 1" in _texto(importado)
+
+
+def test_una_cache_importada_con_rebase_apunta_a_la_ruta_nueva(entorno: Path) -> None:
+    """Para cuando la colección cambia de unidad o de punto de montaje."""
+    payload = b"ROM"
+    viejas = _roms(entorno / "viejo", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+    runner.invoke(app, ["scan", "--platform", "nes", "--input", str(viejas), "--dat", str(dat), "--no-annotate-ra"])
+    runner.invoke(app, ["cache-export", "--output", str(entorno / "cache.json")])
+    runner.invoke(app, ["cache-clear", "--confirm"])
+    nuevas = entorno / "nuevo"
+    viejas.rename(nuevas)
+
+    result = runner.invoke(app, ["cache-import", str(entorno / "cache.json"), "--rebase", f"{viejas}={nuevas}"])
+
+    assert result.exit_code == 0, result.output
+    assert "puede reutilizar 1" in _texto(result)
+
+
+def test_un_rebase_mal_escrito_se_explica(entorno: Path) -> None:
+    (entorno / "cache.json").write_text('{"entries": []}', encoding="utf-8")
+
+    result = runner.invoke(app, ["cache-import", str(entorno / "cache.json"), "--rebase", "sin-igual"])
+
+    assert result.exit_code == 2
+    assert "/ruta/vieja=/ruta/nueva" in _texto(result)
+
+
+def test_un_archivo_que_no_es_una_cache_se_rechaza(entorno: Path) -> None:
+    (entorno / "cualquiera.json").write_text('{"otra": "cosa"}', encoding="utf-8")
+
+    result = runner.invoke(app, ["cache-import", str(entorno / "cualquiera.json")])
+
+    assert result.exit_code == 2
+    assert "no parece una caché exportada" in _texto(result)
+
+
+# --- undo --------------------------------------------------------------------
+
+
+def _manifiesto_aplicado(entorno: Path) -> Path:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    manifest = Manifest(
+        id="m",
+        scan_id="s",
+        platform=Platform.NES,
+        profile_snapshot={},
+        entries=[
+            ManifestEntry(
+                bucket=OutputBucket.MAIN,
+                action=ActionMode.COPY,
+                source_path=str(roms / "Juego (Europe).nes"),
+                destination_path=str(entorno / "curada" / "Juego (Europe).nes"),
+                rom_id="r",
+            )
+        ],
+    )
+    ruta = entorno / "manifest.json"
+    ruta.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    runner.invoke(app, ["apply", "--manifest", str(ruta), "--confirm"])
+    return ruta
+
+
+def test_undo_sin_confirm_solo_muestra_lo_que_desharia(entorno: Path) -> None:
+    _manifiesto_aplicado(entorno)
+    copiado = entorno / "curada" / "Juego (Europe).nes"
+    assert copiado.exists()
+
+    result = runner.invoke(app, ["undo"])
+
+    assert result.exit_code == 0, result.output
+    assert "Simulación" in _texto(result)
+    assert copiado.exists(), "sin --confirm no se toca nada"
+
+
+def test_undo_con_confirm_devuelve_la_coleccion_a_como_estaba(entorno: Path) -> None:
+    _manifiesto_aplicado(entorno)
+    copiado = entorno / "curada" / "Juego (Europe).nes"
+
+    result = runner.invoke(app, ["undo", "--confirm"])
+
+    assert result.exit_code == 0, result.output
+    assert not copiado.exists()
+    assert (entorno / "roms" / "Juego (Europe).nes").exists(), "el original no se toca"
+
+
+def test_undo_sin_aplicaciones_registradas_lo_dice(entorno: Path) -> None:
+    result = runner.invoke(app, ["undo"])
+
+    assert result.exit_code == 1
+    assert "No hay ninguna aplicación registrada" in _texto(result)
+
+
+# --- contenedores ------------------------------------------------------------
+
+
+def test_plan_con_rezip_anuncia_los_zip_que_creara(entorno: Path) -> None:
+    import zipfile
+
+    payload = b"ROM"
+    roms = entorno / "roms"
+    roms.mkdir()
+    with zipfile.ZipFile(roms / "set.zip", "w") as zf:
+        zf.writestr("basura.nes", payload)
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+    runner.invoke(app, ["scan", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--no-annotate-ra"])
+
+    result = runner.invoke(
+        app,
+        ["plan", "--scan", str(entorno / ".retroperfect" / "scans" / "latest.json"), "--outputs", "main", "--output-dir", str(entorno / "curada"), "--containers", "rezip"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "1 ZIP" in _texto(result)
+
+
+def test_plan_con_un_modo_de_contenedor_desconocido_se_rechaza(entorno: Path) -> None:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+    runner.invoke(app, ["scan", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--no-annotate-ra"])
+
+    result = runner.invoke(
+        app,
+        ["plan", "--scan", str(entorno / ".retroperfect" / "scans" / "latest.json"), "--containers", "comprimir-mucho"],
+    )
+
+    assert result.exit_code == 2
+
+
+# --- sync-device -------------------------------------------------------------
+
+
+def _coleccion_de_tamanos(entorno: Path, tamanos: dict[str, int]) -> tuple[Path, Path]:
+    roms = entorno / "roms"
+    roms.mkdir()
+    lineas = ['<?xml version="1.0"?>', "<datafile>", "<header><name>NES</name></header>"]
+    for nombre, tamano in tamanos.items():
+        data = (nombre[:1] * tamano).encode()
+        (roms / f"{nombre}.nes").write_bytes(data)
+        lineas.append(
+            f'<game name="{nombre}"><description>{nombre}</description>'
+            f'<rom name="{nombre}.nes" size="{len(data)}" crc="{binascii.crc32(data) & 0xFFFFFFFF:08x}" '
+            f'md5="{hashlib.md5(data).hexdigest()}" sha1="{hashlib.sha1(data).hexdigest()}"/></game>'
+        )
+    lineas.append("</datafile>")
+    dat = entorno / "nes.xml"
+    dat.write_text("\n".join(lineas), encoding="utf-8")
+    runner.invoke(app, ["scan", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--no-annotate-ra"])
+    return roms, entorno / ".retroperfect" / "scans" / "latest.json"
+
+
+def test_sync_device_sin_confirm_solo_dice_que_cabria(entorno: Path) -> None:
+    _roms, scan = _coleccion_de_tamanos(entorno, {"Pequeno (Europe)": 100, "Grande (Europe)": 10_000})
+
+    result = runner.invoke(app, ["sync-device", "--scan", str(scan), "--dest", str(entorno / "sd"), "--budget", "1KB"])
+
+    texto = _texto(result)
+    assert result.exit_code == 0, result.output
+    assert "Pequeno" in texto
+    assert "Simulación" in texto
+    assert not (entorno / "sd").exists(), "sin --confirm no se toca el dispositivo"
+
+
+def test_sync_device_copia_lo_que_cabe(entorno: Path) -> None:
+    _roms, scan = _coleccion_de_tamanos(entorno, {"Pequeno (Europe)": 100, "Grande (Europe)": 10_000})
+
+    result = runner.invoke(app, ["sync-device", "--scan", str(scan), "--dest", str(entorno / "sd"), "--budget", "1KB", "--confirm"])
+
+    assert result.exit_code == 0, result.output
+    copiados = sorted(item.name for item in (entorno / "sd" / "main").iterdir())
+    assert copiados == ["Pequeno (Europe).nes"]
+
+
+def test_sync_device_avisa_si_no_cabe_nada(entorno: Path) -> None:
+    _roms, scan = _coleccion_de_tamanos(entorno, {"Grande (Europe)": 10_000})
+
+    result = runner.invoke(app, ["sync-device", "--scan", str(scan), "--dest", str(entorno / "sd"), "--budget", "10"])
+
+    assert result.exit_code == 1
+    assert "No cabe ni un juego" in _texto(result)
+
+
+def test_sync_device_rechaza_un_presupuesto_que_no_entiende(entorno: Path) -> None:
+    _roms, scan = _coleccion_de_tamanos(entorno, {"Juego (Europe)": 10})
+
+    result = runner.invoke(app, ["sync-device", "--scan", str(scan), "--dest", str(entorno / "sd"), "--budget", "mucho"])
+
+    assert result.exit_code == 2
+    assert "Tamaño no entendido" in _texto(result)
+
+
+def test_sync_device_rechaza_un_orden_desconocido(entorno: Path) -> None:
+    _roms, scan = _coleccion_de_tamanos(entorno, {"Juego (Europe)": 10})
+
+    result = runner.invoke(app, ["sync-device", "--scan", str(scan), "--dest", str(entorno / "sd"), "--budget", "1KB", "--order", "por-color"])
+
+    assert result.exit_code == 2
+
+
+# --- curate (varias plataformas) ---------------------------------------------
+
+
+def _romset_multiplataforma(entorno: Path) -> Path:
+    """Un romset con nes, snes, una carpeta sin DAT y otra irreconocible."""
+    raiz = entorno / "romset"
+    contenidos = {
+        "nes": ("Metroid (Europe).nes", b"MET"),
+        "snes": ("Zelda (Europe).sfc", b"ZEL"),
+        "psx": ("Final Fantasy VII (Europe).bin", b"FF7"),
+        "mis-cosas": ("vete-a-saber.bin", b"??"),
+    }
+    for carpeta, (nombre, data) in contenidos.items():
+        destino = raiz / carpeta
+        destino.mkdir(parents=True)
+        (destino / nombre).write_bytes(data)
+    # DAT solo para nes y snes: psx se queda sin DAT a propósito.
+    for carpeta, cabecera in [("nes", "Nintendo - Nintendo Entertainment System"), ("snes", "Nintendo - Super Nintendo Entertainment System")]:
+        nombre, data = contenidos[carpeta]
+        dat = entorno / f"{carpeta}.dat"
+        dat.write_text(
+            f'<?xml version="1.0"?><datafile><header><name>{cabecera}</name></header>'
+            f'<game name="{Path(nombre).stem}"><description>{Path(nombre).stem}</description>'
+            f'<rom name="{nombre}" size="{len(data)}" crc="{binascii.crc32(data) & 0xFFFFFFFF:08x}" '
+            f'md5="{hashlib.md5(data).hexdigest()}" sha1="{hashlib.sha1(data).hexdigest()}"/></game></datafile>',
+            encoding="utf-8",
+        )
+        assert runner.invoke(app, ["dat-import", str(dat)]).exit_code == 0
+    return raiz
+
+
+def test_curate_recorre_el_romset_y_dice_que_no_ha_curado(entorno: Path) -> None:
+    raiz = _romset_multiplataforma(entorno)
+
+    result = runner.invoke(app, ["curate", "--root", str(raiz), "--output-dir", str(entorno / "curada"), "--outputs", "main"])
+
+    texto = _texto(result)
+    assert result.exit_code == 0, result.output
+    assert "NES / Famicom" in texto and "SNES / SFC" in texto
+    assert "No hay ningún DAT de PlayStation instalado" in texto
+    assert "No se reconoce a qué plataforma" in texto
+    assert "Curadas 2 plataforma(s)" in texto
+    assert "Simulación" in texto
+    assert not (entorno / "curada").exists(), "sin --confirm no se toca nada"
+
+
+def test_curate_cura_cada_plataforma_en_su_subcarpeta(entorno: Path) -> None:
+    raiz = _romset_multiplataforma(entorno)
+
+    result = runner.invoke(
+        app,
+        ["curate", "--root", str(raiz), "--output-dir", str(entorno / "curada"), "--outputs", "main", "--confirm"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (entorno / "curada" / "nes" / "main" / "Metroid (Europe).nes").read_bytes() == b"MET"
+    assert (entorno / "curada" / "snes" / "main" / "Zelda (Europe).sfc").read_bytes() == b"ZEL"
+
+
+def test_curate_puede_acotar_las_plataformas(entorno: Path) -> None:
+    raiz = _romset_multiplataforma(entorno)
+
+    result = runner.invoke(
+        app,
+        ["curate", "--root", str(raiz), "--output-dir", str(entorno / "curada"), "--outputs", "main", "--platforms", "nes", "--confirm"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (entorno / "curada" / "nes").exists()
+    assert not (entorno / "curada" / "snes").exists()
+
+
+def test_curate_de_una_carpeta_sin_subcarpetas_lo_dice(entorno: Path) -> None:
+    vacia = entorno / "vacia"
+    vacia.mkdir()
+
+    result = runner.invoke(app, ["curate", "--root", str(vacia)])
+
+    assert result.exit_code == 1
+    assert "una carpeta por plataforma" in _texto(result)
+
+
+def test_export_pegasus_escribe_el_archivo_de_pegasus(entorno: Path) -> None:
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+
+    result = runner.invoke(
+        app,
+        ["export", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--format", "pegasus", "--output", str(entorno / "metadata.pegasus.txt")],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "collection:" in (entorno / "metadata.pegasus.txt").read_text(encoding="utf-8")
+
+
+def test_thumbnails_con_retroarch_usa_la_subcarpeta_del_sistema(entorno: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RetroArch las busca en <thumbnails>/<Nombre del sistema>/Named_Boxarts/."""
+    from retroperfect import thumbnails as thumbs_module
+
+    payload = b"ROM"
+    roms = _roms(entorno / "roms", {"Juego (Europe).nes": payload})
+    dat = _dat(entorno / "nes.xml", {"Juego (Europe)": payload})
+
+    class _Respuesta:
+        status_code = 200
+        content = b"PNG"
+
+    monkeypatch.setattr(thumbs_module, "http_get", lambda _url: _Respuesta())
+
+    result = runner.invoke(
+        app,
+        ["thumbnails", "--platform", "nes", "--input", str(roms), "--dat", str(dat), "--dest", str(entorno / "thumbs"), "--retroarch"],
+    )
+
+    assert result.exit_code == 0, result.output
+    esperada = entorno / "thumbs" / "Nintendo - Nintendo Entertainment System" / "Named_Boxarts" / "Juego (Europe).png"
+    assert esperada.read_bytes() == b"PNG"

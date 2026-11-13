@@ -6,6 +6,8 @@ from pathlib import Path
 
 from nicegui import ui
 
+from .i18n import _
+
 GLOBAL_CSS = """
 body { background: #f6f7f8; color: #172326; }
 body.body--dark { background: #101719; color: #e8eef0; }
@@ -201,6 +203,23 @@ def _data_table(columns: list[dict], *, card: bool = True, **kwargs) -> ui.table
     return table
 
 
+# Filas que como mucho se mandan al navegador en una tabla. Las tablas paginan
+# en el cliente, así que todas las filas viajan por el websocket aunque solo se
+# vean quince: con una colección de 20.000 ROMs la pestaña se arrastraba.
+MAX_FILAS_TABLA = 2000
+
+
+def _limitar_filas(rows: list[dict]) -> tuple[list[dict], str]:
+    """Recorta la tabla y devuelve (filas, aviso) para que se vea que está recortada.
+
+    Recortar en silencio sería peor que ir lento: el usuario tiene que saber
+    que lo que mira no es la lista completa.
+    """
+    if len(rows) <= MAX_FILAS_TABLA:
+        return rows, ""
+    return rows[:MAX_FILAS_TABLA], f" Se muestran las primeras {MAX_FILAS_TABLA} de {len(rows)} filas; el plan y los informes sí llevan todo."
+
+
 def _open_path(path: Path | str | None) -> None:
     if not path:
         return
@@ -287,7 +306,7 @@ def _path_picker(target: ui.input, *, choose: str, suffixes: set[str] | None = N
         return choose == "directory" or not suffixes or path.suffix.lower() in suffixes
 
     with dialog, ui.card().classes("w-[900px] max-w-[95vw]"):
-        ui.label("Explorar archivos").classes("text-lg font-semibold")
+        ui.label(_("Explorar archivos")).classes("text-lg font-semibold")
         path_label = ui.label().classes("text-sm text-gray-600")
         entries = ui.column().classes("w-full max-h-[55vh] overflow-auto border border-gray-200 rounded-md p-2 gap-1")
 
@@ -316,11 +335,11 @@ def _path_picker(target: ui.input, *, choose: str, suffixes: set[str] | None = N
             dialog.close()
 
         with ui.row().classes("w-full items-center"):
-            _small_button("Inicio", "home", lambda: refresh(Path.home()))
-            _small_button("Proyecto", "terminal", lambda: refresh(Path.cwd()))
+            _small_button(_("Inicio"), "home", lambda: refresh(Path.home()))
+            _small_button(_("Proyecto"), "terminal", lambda: refresh(Path.cwd()))
             ui.space()
             if choose in {"directory", "any"}:
-                ui.button("Usar esta carpeta", icon="check", on_click=lambda: select(current["path"])).props("color=primary")
-            ui.button("Cerrar", icon="close", on_click=dialog.close).props("flat")
+                ui.button(_("Usar esta carpeta"), icon="check", on_click=lambda: select(current["path"])).props("color=primary")
+            ui.button(_("Cerrar"), icon="close", on_click=dialog.close).props("flat")
         refresh(Path.cwd())
     return dialog
