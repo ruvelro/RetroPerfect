@@ -38,6 +38,10 @@ Auditoría completa del proyecto y corrección de sus hallazgos.
 - La aplicación empaquetada escribía su estado en el directorio que heredaba al
   abrirse con doble clic (en macOS, la raíz del disco), donde no tiene permiso.
 - Un DAT ilegible o con entidades XML propias salía como traceback.
+- En un sistema sin idioma configurado (`LANG=C.UTF-8`, lo habitual en un
+  contenedor) la interfaz abría en inglés o en español según la versión de
+  Python: la 3.11 interpretaba ese locale como `en_US` y las siguientes no.
+  Sin preferencia declarada se usa el idioma de origen.
 
 ### Añadido
 

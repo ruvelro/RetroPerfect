@@ -10,8 +10,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import pytest
-
 from retroperfect import i18n
 from retroperfect.i18n import LANGUAGES, SOURCE_LANGUAGE, available_languages, current_language, missing_keys, set_language
 
@@ -39,15 +37,6 @@ def cadenas_traducibles() -> list[str]:
                 if isinstance(argumento, ast.Constant) and isinstance(argumento.value, str):
                     encontradas.append(argumento.value)
     return encontradas
-
-
-@pytest.fixture(autouse=True)
-def idioma_de_origen():
-    """Cada test arranca en español y lo deja como estaba."""
-    anterior = current_language()
-    set_language(SOURCE_LANGUAGE)
-    yield
-    set_language(anterior)
 
 
 # --- el candado --------------------------------------------------------------
@@ -137,6 +126,40 @@ def test_la_variable_de_entorno_manda_sobre_el_sistema(monkeypatch) -> None:
 
     monkeypatch.delenv(i18n.LANGUAGE_ENV_VAR)
     assert i18n.detect_language() is not None
+
+
+def test_un_sistema_sin_idioma_no_se_interpreta_como_ingles(monkeypatch) -> None:
+    """El fallo que tumbó la CI: `LANG=C.UTF-8` no es una petición de inglés.
+
+    Python 3.11 devolvía `en_US` para ese locale y 3.12 en adelante `C`, así
+    que la interfaz salía en un idioma u otro según la versión.
+    """
+    monkeypatch.delenv(i18n.LANGUAGE_ENV_VAR, raising=False)
+    for variable in i18n._LOCALE_ENV_VARS:
+        monkeypatch.delenv(variable, raising=False)
+
+    assert i18n.detect_language() == SOURCE_LANGUAGE, "sin locale, el idioma de origen"
+
+    for neutro in ("C", "C.UTF-8", "POSIX", "c.utf8"):
+        monkeypatch.setenv("LANG", neutro)
+        assert i18n.detect_language() == SOURCE_LANGUAGE, f"{neutro} no es un idioma"
+
+
+def test_el_idioma_del_sistema_se_respeta(monkeypatch) -> None:
+    monkeypatch.delenv(i18n.LANGUAGE_ENV_VAR, raising=False)
+    for variable in i18n._LOCALE_ENV_VARS:
+        monkeypatch.delenv(variable, raising=False)
+
+    monkeypatch.setenv("LANG", "en_GB.UTF-8")
+    assert i18n.detect_language() == "en_GB"
+
+    # LANGUAGE trae una lista de preferencias y manda sobre LANG.
+    monkeypatch.setenv("LANGUAGE", "fr_FR:es_ES")
+    assert i18n.detect_language() == "fr_FR"
+
+    # LC_ALL manda sobre todas, incluso para desactivar el idioma.
+    monkeypatch.setenv("LC_ALL", "C")
+    assert i18n.detect_language() == SOURCE_LANGUAGE
 
 
 def test_los_idiomas_ofrecidos_tienen_catalogo() -> None:

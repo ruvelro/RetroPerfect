@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import locale
 import os
+import sys
 
 # Idiomas con catálogo, en el orden en el que se ofrecen.
 LANGUAGES = {
@@ -65,16 +66,57 @@ def _load_catalog(code: str) -> dict[str, str]:
     return {clave: valor for clave, valor in catalogo.items() if valor}
 
 
+# Variables del entorno que fijan el idioma, de más a menos prioritaria.
+# LC_MESSAGES es la categoría de los textos y LANG el valor por defecto de
+# todas. LANGUAGE puede traer una lista de preferencias ("es:en"): vale la
+# primera.
+_LOCALE_ENV_VARS = ("LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG")
+# "C" y "POSIX" no nombran un idioma: significan "sin locale configurado".
+_NEUTRAL_LOCALES = {"c", "posix"}
+
+
+def _system_language() -> str | None:
+    """Idioma que declara el sistema, o None si no declara ninguno.
+
+    Leemos el entorno en vez de llamar a `locale.getdefaultlocale()` porque esa
+    función está obsoleta y, sobre todo, porque no contesta lo mismo en todas
+    las versiones: con `LANG=C.UTF-8` —lo normal en un contenedor o en CI—
+    Python 3.11 se inventa `en_US`, mientras que de 3.12 en adelante devuelve
+    `C`. La misma máquina abría la interfaz en inglés o en español según con
+    qué Python se arrancara.
+    """
+    for variable in _LOCALE_ENV_VARS:
+        valor = os.environ.get(variable, "").split(":")[0].strip()
+        if not valor:
+            continue
+        idioma = valor.split(".")[0].split("@")[0]
+        return None if idioma.lower() in _NEUTRAL_LOCALES else idioma
+    return _windows_language()
+
+
+def _windows_language() -> str | None:
+    """Windows no usa las variables POSIX: hay que preguntarle al sistema."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        lcid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+    except Exception:  # pragma: no cover - solo se ejecuta en Windows
+        return None
+    return locale.windows_locale.get(lcid)
+
+
 def detect_language() -> str:
-    """Idioma a usar: la variable de entorno manda, y si no, el del sistema."""
+    """Idioma a usar: la variable de entorno manda, y si no, el del sistema.
+
+    Sin nada que lo diga, el idioma de origen. Un sistema en `C` no está
+    pidiendo inglés: está diciendo que no tiene preferencia.
+    """
     forzado = os.environ.get(LANGUAGE_ENV_VAR)
     if forzado:
         return forzado
-    try:
-        del_sistema, _codificacion = locale.getdefaultlocale()
-    except ValueError:  # algunos sistemas devuelven un locale que no se parsea
-        del_sistema = None
-    return del_sistema or SOURCE_LANGUAGE
+    return _system_language() or SOURCE_LANGUAGE
 
 
 def gettext(text: str) -> str:

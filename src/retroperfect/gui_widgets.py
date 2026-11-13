@@ -335,8 +335,8 @@ def _path_picker(target: ui.input, *, choose: str, suffixes: set[str] | None = N
             dialog.close()
 
         with ui.row().classes("w-full items-center"):
-            _small_button("Inicio", "home", lambda: refresh(Path.home()))
-            _small_button("Proyecto", "terminal", lambda: refresh(Path.cwd()))
+            _small_button(_("Inicio"), "home", lambda: refresh(Path.home()))
+            _small_button(_("Proyecto"), "terminal", lambda: refresh(Path.cwd()))
             ui.space()
             if choose in {"directory", "any"}:
                 ui.button(_("Usar esta carpeta"), icon="check", on_click=lambda: select(current["path"])).props("color=primary")
